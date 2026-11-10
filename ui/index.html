@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RouteDeck</title>
   <link rel="icon" href="logo.svg" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
   <div class="app">
@@ -19,6 +19,7 @@
       </div>
       <nav class="nav" id="nav">
         <button data-view="home" class="active"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+        <button data-view="analytics"><svg viewBox="0 0 24 24"><path d="M3 3v18h18 M7 15l4-4 3 3 6-7"/></svg>Analytics</button>
         <button data-view="providers"><svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7"/></svg>Providers <span class="badge" id="nav-prov-count"></span></button>
         <button data-view="claude"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6 M12 19h8"/></svg>Claude Code</button>
         <button data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
@@ -79,6 +80,14 @@
           <div class="stat card"><div class="stat-label">Money saved</div><div class="stat-value" id="s-usd">–</div><div class="stat-foot muted">estimated</div></div>
         </div>
 
+        <div class="card">
+          <div class="card-head">
+            <h2>Tokens through Headroom <span class="muted small">per 5 minutes, last 24 hours</span></h2>
+            <a href="#" data-goto="analytics" class="small">Full analytics →</a>
+          </div>
+          <div id="home-activity" class="chart-host"></div>
+        </div>
+
         <div class="grid-2">
           <div class="card">
             <h2>Get started</h2>
@@ -102,6 +111,65 @@
               <div class="copyrow"><span class="label">OpenAI</span><code id="ep-openai"></code><button class="icon-btn" data-copy="ep-openai" title="Copy">⧉</button></div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- ANALYTICS -->
+      <section class="view" id="view-analytics">
+        <header class="page-head">
+          <div>
+            <h1>Analytics</h1>
+            <p class="muted">What you used, where it went, and what Headroom saved.</p>
+          </div>
+          <div class="chips" id="range-chips">
+            <button class="chip" data-range="1d">24 hours</button>
+            <button class="chip active" data-range="7d">7 days</button>
+            <button class="chip" data-range="30d">30 days</button>
+            <button class="chip" data-range="90d">90 days</button>
+          </div>
+        </header>
+        <div class="notice" id="an-notice" hidden></div>
+
+        <div class="stats stats-6">
+          <div class="stat card"><div class="stat-label">Requests</div><div class="stat-value" id="k-req">–</div><div class="stat-foot muted" id="k-req-foot">via OmniRoute</div></div>
+          <div class="stat card"><div class="stat-label">Tokens used</div><div class="stat-value" id="k-tok">–</div><div class="stat-foot muted" id="k-tok-foot">&nbsp;</div></div>
+          <div class="stat card"><div class="stat-label">Success rate</div><div class="stat-value" id="k-ok">–</div><div class="stat-foot muted" id="k-ok-foot">&nbsp;</div></div>
+          <div class="stat card"><div class="stat-label">Avg response time</div><div class="stat-value" id="k-lat">–</div><div class="stat-foot muted" id="k-fb">&nbsp;</div></div>
+          <div class="stat card"><div class="stat-label">Tokens saved</div><div class="stat-value" id="k-saved">–</div><div class="stat-foot muted" id="k-saved-foot">by Headroom</div></div>
+          <div class="stat card"><div class="stat-label">Providers used</div><div class="stat-value" id="k-prov">–</div><div class="stat-foot muted" id="k-models">&nbsp;</div></div>
+        </div>
+
+        <div class="card" data-chart>
+          <div class="card-head"><h2>Requests per day</h2><button class="btn small" data-table-toggle>Table</button></div>
+          <div class="chart-host" id="c-req"></div>
+        </div>
+        <div class="card" data-chart>
+          <div class="card-head"><h2>Tokens per day</h2><button class="btn small" data-table-toggle>Table</button></div>
+          <div class="chart-host" id="c-tok"></div>
+        </div>
+        <div class="grid-2">
+          <div class="card" data-chart>
+            <div class="card-head"><h2>Requests by provider</h2><button class="btn small" data-table-toggle>Table</button></div>
+            <div class="chart-host" id="c-prov"></div>
+          </div>
+          <div class="card" data-chart>
+            <div class="card-head"><h2>Top models <span class="muted small">by requests</span></h2><button class="btn small" data-table-toggle>Table</button></div>
+            <div class="chart-host" id="c-model"></div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="card" data-chart>
+            <div class="card-head"><h2>Headroom savings <span class="muted small">by method</span></h2><button class="btn small" data-table-toggle>Table</button></div>
+            <div class="chart-host" id="c-layers"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Errors</h2></div>
+            <div id="c-errors"></div>
+          </div>
+        </div>
+        <div class="card" data-chart>
+          <div class="card-head"><h2>Tokens through Headroom <span class="muted small">per 5 minutes, last 7 days</span></h2><button class="btn small" data-table-toggle>Table</button></div>
+          <div class="chart-host" id="c-history"></div>
         </div>
       </section>
 
@@ -163,6 +231,25 @@
             <h2>Project folder</h2>
             <p class="muted small">Claude Code opens in this folder.</p>
             <input id="workdir" placeholder="C:\Users\you\projects\my-app" />
+          </div>
+        </div>
+        <div class="card ponytail-card">
+          <div class="pt-left">
+            <div class="pt-logo">🐴</div>
+            <div>
+              <h2>Ponytail <span class="pill" id="pt-pill">checking…</span></h2>
+              <p class="muted small">A Claude Code plugin that makes the agent "think like the laziest senior dev in the room": less code, fewer tokens, same safety checks. <a href="https://github.com/DietrichGebert/ponytail" target="_blank" rel="noopener noreferrer">About ↗</a></p>
+            </div>
+          </div>
+          <div class="pt-right">
+            <label class="small muted" for="pt-mode">Mode</label>
+            <select id="pt-mode">
+              <option value="lite">Lite: gentle</option>
+              <option value="full">Full: recommended</option>
+              <option value="ultra">Ultra: most minimal</option>
+              <option value="off">Off for RouteDeck launches</option>
+            </select>
+            <button class="btn small primary" id="pt-install">Install</button>
           </div>
         </div>
         <div class="card launch-card">
@@ -234,6 +321,6 @@
     </main>
   </div>
   <div class="toasts" id="toasts"></div>
-  <script src="app.js" type="module"></script>
+  <script src="app.js?v=4" type="module"></script>
 </body>
 </html>

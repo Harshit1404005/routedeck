@@ -38,12 +38,19 @@ Headroom and OmniRoute are great together, but wiring them up by hand looks like
 - ⚡ **One click**: start or stop Headroom and OmniRoute together, in the right order.
 - 🔑 **Easy keys**: 15 hand-picked free providers (Gemini, Mistral, OpenRouter, Groq, Nara, LLM7, GitHub Models…), plus four that need **no key at all**.
 - 🧭 **Live flow map**: see your traffic go *Your apps → Headroom → OmniRoute → Providers*.
-- 📉 **Savings**: tokens saved, compression rate and estimated money saved.
+- 📊 **Analytics with graphs**: requests and tokens per day, top providers and models, success rate, response time, fallbacks, errors, and Headroom savings by method. Hover any chart for details, or switch it to a table.
+- 📉 **Savings**: tokens saved, compression rate and estimated money saved, plus a live activity chart.
+- 🐴 **[Ponytail](https://github.com/DietrichGebert/ponytail) built in**: install the "write less code" Claude Code plugin with one click and pick its mode (lite, full, ultra).
 - 🖥️ **Claude Code launcher**: pick a route and a model, then click. Or copy the ready-made command.
 - 🎛️ **Simple settings**: turn compression, the ML compressor, caching, or either service on and off with switches.
 - 🚀 **Start with Windows** (optional): everything is ready when you sign in.
 - 🔒 **Local only**: the dashboard answers this computer only. Your keys go straight into your own OmniRoute.
 - 🪶 **Zero dependencies**: one small Node.js server and a plain HTML page.
+
+<div align="center">
+<img src="docs/analytics-dark.jpg" alt="Analytics screen with charts (sample data)" width="820" />
+<br /><sub>Analytics page (sample data)</sub>
+</div>
 
 <table>
 <tr>
@@ -106,6 +113,23 @@ Your browser opens on the dashboard. Then:
 > folder and RouteDeck runs `npm run dev` there. Headroom in a virtualenv? Point *Headroom program* at
 > its `headroom` executable.
 
+## Ponytail
+
+[Ponytail](https://github.com/DietrichGebert/ponytail) is a Claude Code plugin that makes the agent
+write only the code a task needs, without dropping validation, error handling or security. On the
+**Claude Code** page, click **Install** (this runs `claude plugin marketplace add DietrichGebert/ponytail`
+and `claude plugin install ponytail@ponytail`), then pick a mode. RouteDeck passes the mode as
+`PONYTAIL_DEFAULT_MODE` when it launches Claude Code. **Remove** uninstalls it.
+
+## Analytics
+
+The **Analytics** page combines two sources:
+
+- **OmniRoute** (needs your OmniRoute password): requests, tokens, success rate, response time,
+  fallbacks, errors, and breakdowns by provider and model, for 24 hours, 7, 30 or 90 days.
+- **Headroom** (always on): tokens saved and savings by method. RouteDeck also records Headroom's
+  totals every 5 minutes (kept for 7 days in `~/.routedeck/history.json`) to draw activity over time.
+
 ## Settings
 
 Saved in `~/.routedeck/config.json` (readable only by you).
@@ -149,8 +173,9 @@ RouteDeck is a launcher. The hard work is done by:
 
 - [OmniRoute](https://github.com/cheaper-inference/OmniRoute): the multi-provider AI router
 - [Headroom](https://github.com/headroomlabs-ai/headroom): the context compression proxy
+- [Ponytail](https://github.com/DietrichGebert/ponytail): the "write less code" Claude Code plugin
 
-RouteDeck isn't affiliated with either project or with Anthropic.
+RouteDeck isn't affiliated with any of these projects or with Anthropic.
 
 ## License
 

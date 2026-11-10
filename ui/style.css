@@ -106,7 +106,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 9px 14px; border-radius: 10px; border: 1px solid var(--border);
   background: var(--panel); color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
-  transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.08s ease, border-color 0.15s ease;
 }
 .btn:hover { border-color: var(--accent); }
 .btn:active { transform: scale(0.98); }
@@ -271,3 +271,57 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
   .toggle-row, .field-row { flex-direction: column; align-items: stretch; }
   .toggle-row { flex-direction: row; align-items: center; }
 }
+
+/* ---------------------------------------------------------------- charts
+   Categorical palette: dataviz reference instance (validated light + dark). */
+:root { --series-1: #2a78d6; --series-2: #eb6834; --grid: #e9ebf2; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --series-1: #3987e5; --series-2: #d95926; --grid: #22263a; }
+}
+:root[data-theme="dark"] { --series-1: #3987e5; --series-2: #d95926; --grid: #22263a; }
+
+.chart-host { position: relative; min-height: 60px; }
+.viz svg { display: block; width: 100%; height: auto; overflow: visible; fill: none; stroke: none; stroke-width: 1; }
+.viz-grid { stroke: var(--grid); stroke-width: 1; }
+.viz-axis { stroke: var(--border); stroke-width: 1; }
+.viz-tick { fill: var(--muted); font-size: 11px; }
+.viz-label { fill: var(--text); font-size: 12.5px; }
+.viz-value { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.viz-track { fill: var(--panel-2); }
+.viz-bar { transition: opacity 0.15s; }
+.viz-line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; }
+.viz-area { fill: var(--series-1); opacity: 0.12; }
+.viz-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.viz-dot { fill: var(--series-1); stroke: var(--panel); stroke-width: 2; }
+.viz-hit { fill: transparent; cursor: crosshair; }
+.viz-tip {
+  position: absolute; left: 0; top: 0; pointer-events: none; z-index: 5;
+  background: var(--panel); border: 1px solid var(--border); box-shadow: var(--shadow);
+  border-radius: 10px; padding: 8px 10px; font-size: 12.5px; white-space: nowrap;
+}
+.viz-tip i, .viz-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.viz-tip-head { font-weight: 700; margin-bottom: 3px; }
+.viz-tip-sub { color: var(--muted); }
+.viz-legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.viz-empty { color: var(--muted); padding: 22px 4px; text-align: center; border: 1px dashed var(--border); border-radius: 10px; }
+.viz-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.viz-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.viz-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.viz-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.stats-6 { grid-template-columns: repeat(6, 1fr); }
+.stats-6 .stat-value { font-size: 24px; }
+.err-list { display: flex; flex-direction: column; gap: 8px; }
+.err-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); }
+.ok-big { display: flex; align-items: center; gap: 10px; padding: 14px; border-radius: 12px; background: color-mix(in srgb, var(--ok) 10%, var(--panel)); color: var(--text); }
+
+/* ponytail */
+.ponytail-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.pt-left { display: flex; gap: 14px; align-items: flex-start; flex: 1; min-width: 280px; }
+.pt-left h2 { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.pt-left p { margin: 0; }
+.pt-logo { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; font-size: 22px; background: var(--accent-soft); flex-shrink: 0; }
+.pt-right { display: flex; align-items: center; gap: 8px; }
+.pt-right select { width: auto; }
+
+@media (max-width: 1100px) { .stats-6 { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 720px) { .stats-6 { grid-template-columns: repeat(2, 1fr); } }

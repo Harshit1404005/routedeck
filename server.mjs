@@ -42,6 +42,7 @@ const DEFAULTS = {
     route: "both", // "both" | "omniroute" | "headroom"
     model: "",
     workDir: os.homedir(),
+    ponytailMode: "full", // "lite" | "full" | "ultra" | "off" (used only when Ponytail is installed)
   },
   app: {
     openBrowser: true,
@@ -391,6 +392,7 @@ function claudeEnv() {
   if (c.route !== "headroom") {
     env.ANTHROPIC_AUTH_TOKEN = config.omniroute.apiKey || "routedeck";
   }
+  if (ponytailState.installed && c.ponytailMode) env.PONYTAIL_DEFAULT_MODE = c.ponytailMode;
   if (c.model) {
     for (const k of [
       "ANTHROPIC_MODEL",
@@ -445,6 +447,84 @@ function launchClaude() {
   }
   log("routedeck", `Opened Claude Code in ${cwd} via ${claudeEnv().ANTHROPIC_BASE_URL}`);
   return { launched: true };
+}
+
+// ---------------------------------------------------------------- Ponytail (Claude Code plugin)
+// https://github.com/DietrichGebert/ponytail: a skill that makes coding agents write less code.
+
+const PONYTAIL_ID = "ponytail@ponytail";
+const PONYTAIL_MARKETPLACE = "DietrichGebert/ponytail";
+const ponytailState = { installed: false, enabled: false, version: "", checkedAt: 0 };
+
+function runClaude(args, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const bin = which("claude");
+    if (!bin) return reject(httpError(400, "Claude Code is not installed."));
+    const child = spawn(bin, args, {
+      shell: IS_WIN, // claude is a .cmd shim on Windows; args are fixed constants.
+      windowsHide: true,
+      env: process.env,
+    });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      log("routedeck", `claude ${args.join(" ")} → exit ${code}`);
+      if (code === 0) resolve(out);
+      else reject(httpError(500, out.replace(ANSI, "").trim().split(/\r?\n/).slice(-3).join(" ") || `claude exited with ${code}`));
+    });
+  });
+}
+
+async function refreshPonytail() {
+  try {
+    const list = JSON.parse(await runClaude(["plugin", "list", "--json"], 30000));
+    const p = (Array.isArray(list) ? list : []).find((x) => String(x.id).startsWith("ponytail@"));
+    Object.assign(ponytailState, {
+      installed: Boolean(p),
+      enabled: Boolean(p?.enabled),
+      version: p?.version || "",
+      checkedAt: Date.now(),
+    });
+  } catch {
+    ponytailState.checkedAt = Date.now();
+  }
+  return ponytailState;
+}
+
+// ---------------------------------------------------------------- history (sampled from Headroom)
+
+const HISTORY_FILE = path.join(HOME_DIR, "history.json");
+const HISTORY_MAX = 7 * 24 * 12; // one week at 5-minute resolution
+let history = [];
+try {
+  history = JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
+  if (!Array.isArray(history)) history = [];
+} catch {}
+
+async function sampleHistory() {
+  if (!config.headroom.enabled || !(await portOpen(config.headroom.port))) return;
+  try {
+    const r = await fetchJson(`http://127.0.0.1:${config.headroom.port}/stats-lifetime`, {}, 5000);
+    const b = r.body || {};
+    history.push({
+      t: Date.now(),
+      requests: b.requests?.total || 0,
+      failed: b.requests?.failed || 0,
+      tokensIn: b.tokens?.input || 0,
+      tokensOut: b.tokens?.output || 0,
+      tokensSaved: b.tokens?.saved || 0,
+    });
+    if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
+    fs.mkdirSync(HOME_DIR, { recursive: true });
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history));
+  } catch {}
 }
 
 // ---------------------------------------------------------------- launch at login (Windows)
@@ -605,6 +685,92 @@ const routes = {
       usdSaved: s.cost?.total_saved_usd || 0,
     };
   },
+  "GET /api/history": async ({ url }) => {
+    const hours = Math.min(Number(url.searchParams.get("hours") || 24), 24 * 7);
+    const since = Date.now() - hours * 3600e3;
+    return history.filter((p) => p.t >= since);
+  },
+  "GET /api/analytics": async ({ url }) => {
+    const range = ["1d", "7d", "30d", "90d"].includes(url.searchParams.get("range"))
+      ? url.searchParams.get("range")
+      : "7d";
+    const out = { range, omniroute: null, omnirouteError: "", headroom: null };
+    // Headroom (no login needed)
+    if (config.headroom.enabled && (await portOpen(config.headroom.port))) {
+      try {
+        const r = await fetchJson(`http://127.0.0.1:${config.headroom.port}/stats`, {}, 6000);
+        const s = r.body || {};
+        out.headroom = {
+          requests: s.requests?.total || 0,
+          cached: s.requests?.cached || 0,
+          failed: s.requests?.failed || 0,
+          tokensIn: s.tokens?.input || 0,
+          tokensOut: s.tokens?.output || 0,
+          tokensSaved: s.summary?.compression?.total_tokens_saved_all_layers || 0,
+          avgPct: s.summary?.compression?.avg_compression_pct || 0,
+          byModel: s.requests?.by_model || {},
+          layers: {
+            Compression: s.savings?.by_layer?.compression?.all_layers_tokens || 0,
+            "Output shaping": s.savings?.by_layer?.output_shaping?.tokens_saved || 0,
+            "Tool search": s.savings?.by_layer?.tool_search?.tokens_saved || s.summary?.compression?.tool_schema_tokens_saved || 0,
+            "Prefix cache": s.prefix_cache?.cache_read_tokens || 0,
+          },
+        };
+      } catch {}
+    }
+    // OmniRoute (needs login)
+    if (config.omniroute.enabled && (await portOpen(config.omniroute.port))) {
+      try {
+        const a = await omni(`/api/usage/analytics?range=${range}`);
+        const top = (rows, n) =>
+          (Array.isArray(rows) ? rows : [])
+            .slice()
+            .sort((x, y) => (y.requests || 0) - (x.requests || 0))
+            .slice(0, n);
+        out.omniroute = {
+          summary: a?.summary || {},
+          dailyTrend: a?.dailyTrend || [],
+          byProvider: top(a?.byProvider, 8).map((p) => ({
+            name: p.provider || p.name || "unknown",
+            requests: Number(p.requests || 0),
+            tokens: Number(p.totalTokens || 0),
+            successRatePct: p.successRatePct ?? null,
+          })),
+          byModel: top(a?.byModel, 8).map((m) => ({
+            name: m.model || m.rawModel || "unknown",
+            provider: m.provider || "",
+            requests: Number(m.requests || 0),
+            tokens: Number(m.totalTokens || 0),
+            avgLatencyMs: m.avgLatencyMs ?? null,
+          })),
+          errors: (a?.errorBreakdown || []).map((e) => ({ type: e.errorType || e.type, count: e.count })),
+        };
+      } catch (e) {
+        out.omnirouteError = e.message;
+      }
+    } else {
+      out.omnirouteError = "OmniRoute is not running.";
+    }
+    return out;
+  },
+  "GET /api/ponytail": async ({ url }) => {
+    if (url.searchParams.get("refresh") || !ponytailState.checkedAt) await refreshPonytail();
+    return { ...ponytailState, mode: config.claude.ponytailMode, claudeFound: Boolean(which("claude")) };
+  },
+  "POST /api/ponytail/install": async () => {
+    try {
+      await runClaude(["plugin", "marketplace", "add", PONYTAIL_MARKETPLACE]);
+    } catch (e) {
+      // Already added is fine; anything else surfaces from the install step.
+      log("routedeck", `marketplace add: ${e.message}`);
+    }
+    await runClaude(["plugin", "install", PONYTAIL_ID]);
+    return refreshPonytail();
+  },
+  "POST /api/ponytail/uninstall": async () => {
+    await runClaude(["plugin", "uninstall", PONYTAIL_ID]);
+    return refreshPonytail();
+  },
   "GET /api/claude/command": async () => ({ command: claudeCommandText(), env: claudeEnv() }),
   "POST /api/claude/launch": async () => launchClaude(),
   "POST /api/open": async ({ body }) => {
@@ -702,6 +868,9 @@ server.listen(APP_PORT, "127.0.0.1", async () => {
   const url = `http://localhost:${APP_PORT}`;
   console.log(`\n  RouteDeck is running at ${url}\n  Keep this window open. Close it to quit RouteDeck.\n`);
   log("routedeck", `RouteDeck started at ${url}`);
+  sampleHistory();
+  setInterval(sampleHistory, 5 * 60 * 1000).unref();
+  refreshPonytail();
   if (config.app.startServicesOnLaunch || background) {
     routes["POST /api/start"]({ body: { service: "all" } }).catch((e) =>
       log("routedeck", `✖ auto-start: ${e.message}`)

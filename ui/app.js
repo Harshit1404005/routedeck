@@ -1,4 +1,5 @@
 // RouteDeck UI. Talks only to the local RouteDeck server (/api/*).
+import { columnChart, barList, lineChart, tableView, fmt } from "./charts.js?v=4";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -85,7 +86,9 @@ function show(view) {
   $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${view}`));
   if (view === "providers") loadProviders();
-  if (view === "claude") refreshClaudeCommand();
+  if (view === "claude") { refreshClaudeCommand(); loadPonytail(); }
+  if (view === "analytics") loadAnalytics();
+  if (view === "home") loadHomeActivity();
   if (view === "logs") { state.logSince = 0; $("#logbox").textContent = ""; pollLogs(); }
   try { localStorage.setItem("rd-view", view); } catch {}
 }
@@ -454,6 +457,182 @@ $("#claude-launch").addEventListener("click", (e) =>
     renderStatus();
   })
 );
+
+// ---------------------------------------------------------------- ponytail
+
+async function loadPonytail(refresh) {
+  const pill = $("#pt-pill"), btn = $("#pt-install");
+  try {
+    const p = await api(`/api/ponytail${refresh ? "?refresh=1" : ""}`);
+    $("#pt-mode").value = p.mode || "full";
+    if (!p.claudeFound) {
+      pill.className = "pill"; pill.textContent = "needs Claude Code";
+      btn.disabled = true;
+    } else if (p.installed) {
+      pill.className = "pill ok"; pill.textContent = `installed${p.version ? " v" + p.version : ""}`;
+      btn.textContent = "Remove"; btn.className = "btn small"; btn.disabled = false;
+    } else {
+      pill.className = "pill"; pill.textContent = "not installed";
+      btn.textContent = "Install"; btn.className = "btn small primary"; btn.disabled = false;
+    }
+    btn.dataset.installed = p.installed ? "1" : "";
+  } catch (e) {
+    pill.textContent = "unknown";
+  }
+}
+
+$("#pt-install").addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  const removing = btn.dataset.installed === "1";
+  if (removing && !confirm("Remove the Ponytail plugin from Claude Code?")) return;
+  withBusy(btn, async () => {
+    btn.textContent = removing ? "Removing…" : "Installing…";
+    await api(removing ? "/api/ponytail/uninstall" : "/api/ponytail/install", {});
+    toast(removing ? "Ponytail removed" : "Ponytail installed. It's active in new Claude Code sessions.", "ok");
+    await loadPonytail(true);
+    refreshClaudeCommand();
+  }).finally(() => loadPonytail());
+});
+$("#pt-mode").addEventListener("change", (e) =>
+  saveConfig({ claude: { ponytailMode: e.target.value } }, true).then(refreshClaudeCommand)
+);
+
+// ---------------------------------------------------------------- analytics
+
+let analyticsRange = "7d";
+let lastAnalytics = null;
+
+$("#range-chips").addEventListener("click", (e) => {
+  const c = e.target.closest("[data-range]");
+  if (!c) return;
+  analyticsRange = c.dataset.range;
+  $$("#range-chips .chip").forEach((x) => x.classList.toggle("active", x === c));
+  loadAnalytics();
+});
+
+// Table toggle on every chart card.
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-table-toggle]");
+  if (!b) return;
+  const card = b.closest("[data-chart]");
+  card.classList.toggle("as-table");
+  b.textContent = card.classList.contains("as-table") ? "Chart" : "Table";
+  renderAnalytics();
+});
+
+function shortDate(s) {
+  const d = new Date(s + (String(s).length === 10 ? "T00:00:00" : ""));
+  return isNaN(d) ? String(s) : d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+async function loadAnalytics() {
+  try {
+    const [a, hist] = await Promise.all([
+      api(`/api/analytics?range=${analyticsRange}`),
+      api(`/api/history?hours=168`),
+    ]);
+    lastAnalytics = { a, hist };
+  } catch (e) {
+    toast(e.message, "bad");
+    return;
+  }
+  renderAnalytics();
+}
+
+function asTable(id) {
+  return $("#" + id).closest("[data-chart]")?.classList.contains("as-table");
+}
+
+function renderAnalytics() {
+  if (!lastAnalytics) return;
+  const { a, hist } = lastAnalytics;
+  const o = a.omniroute, h = a.headroom, s = o?.summary || {};
+
+  const notice = $("#an-notice");
+  if (a.omnirouteError) {
+    notice.hidden = false;
+    notice.innerHTML = `<b>OmniRoute charts need a connection.</b> <span class="muted">${esc(a.omnirouteError)}</span> Connect in <a href="#" data-goto="settings">Settings</a>. Headroom charts still work.`;
+  } else notice.hidden = true;
+
+  $("#k-req").textContent = o ? fmt(s.totalRequests) : "–";
+  $("#k-tok").textContent = o ? fmt(s.totalTokens) : "–";
+  $("#k-tok-foot").textContent = o ? `${fmt(s.promptTokens)} in · ${fmt(s.completionTokens)} out` : "";
+  $("#k-ok").textContent = o && s.totalRequests ? `${Number(s.successRatePct).toFixed(1)}%` : "–";
+  $("#k-ok-foot").textContent = o ? `${fmt(s.successfulRequests)} of ${fmt(s.totalRequests)} succeeded` : "";
+  $("#k-lat").textContent = o && s.avgLatencyMs ? (s.avgLatencyMs >= 1000 ? `${(s.avgLatencyMs / 1000).toFixed(1)}s` : `${s.avgLatencyMs}ms`) : "–";
+  $("#k-fb").textContent = o ? `${fmt(s.fallbackCount || 0)} fallbacks to another provider` : "";
+  $("#k-saved").textContent = h ? fmt(h.tokensSaved) : "–";
+  $("#k-saved-foot").textContent = h ? `${h.avgPct ? h.avgPct.toFixed(1) + "% avg" : "no compression yet"} · since Headroom started` : "Headroom is not running";
+  $("#k-prov").textContent = o ? String(o.byProvider.length) : "–";
+  $("#k-models").textContent = o ? `${s.uniqueModels || o.byModel.length} models` : "";
+
+  // Requests per day
+  const days = (o?.dailyTrend || []).map((d) => ({ label: shortDate(d.date), full: d.date, values: d }));
+  if (asTable("c-req")) tableView($("#c-req"), ["Day", "Requests"], days.map((d) => [d.full, d.values.requests]));
+  else columnChart($("#c-req"), days, { series: [{ key: "requests", label: "Requests" }], emptyText: o ? "No requests in this range yet." : "Connect to OmniRoute to see this." });
+
+  // Tokens per day (stacked input / output)
+  if (asTable("c-tok")) tableView($("#c-tok"), ["Day", "Input tokens", "Output tokens"], days.map((d) => [d.full, d.values.promptTokens, d.values.completionTokens]));
+  else columnChart($("#c-tok"), days, { series: [{ key: "promptTokens", label: "Input" }, { key: "completionTokens", label: "Output" }], emptyText: o ? "No tokens in this range yet." : "Connect to OmniRoute to see this." });
+
+  // By provider / model
+  const prov = (o?.byProvider || []).map((p) => ({ label: p.name, value: p.requests, sub: `${fmt(p.tokens)} tokens${p.successRatePct != null ? ` · ${Number(p.successRatePct).toFixed(0)}% success` : ""}` }));
+  if (asTable("c-prov")) tableView($("#c-prov"), ["Provider", "Requests", "Tokens"], (o?.byProvider || []).map((p) => [p.name, p.requests, p.tokens]));
+  else barList($("#c-prov"), prov, { unit: "requests", emptyText: o ? "No traffic yet." : "Connect to OmniRoute to see this." });
+
+  const models = (o?.byModel || []).map((m) => ({ label: m.name, value: m.requests, sub: `${m.provider ? m.provider + " · " : ""}${fmt(m.tokens)} tokens${m.avgLatencyMs ? ` · ${m.avgLatencyMs}ms avg` : ""}` }));
+  if (asTable("c-model")) tableView($("#c-model"), ["Model", "Requests", "Tokens"], (o?.byModel || []).map((m) => [m.name, m.requests, m.tokens]));
+  else barList($("#c-model"), models, { unit: "requests", emptyText: o ? "No traffic yet." : "Connect to OmniRoute to see this." });
+
+  // Headroom layers
+  const layers = h ? Object.entries(h.layers).map(([label, value]) => ({ label, value })).filter((x) => x.value > 0) : [];
+  if (asTable("c-layers")) tableView($("#c-layers"), ["Method", "Tokens saved"], layers.map((l) => [l.label, l.value]));
+  else barList($("#c-layers"), layers.sort((x, y) => y.value - x.value), { unit: "tokens saved", emptyText: h ? "Nothing saved yet. Savings show up once longer prompts, logs or tool output go through Headroom." : "Headroom is not running." });
+
+  // Errors
+  const errs = (o?.errors || []).filter((e) => e.count > 0);
+  $("#c-errors").innerHTML = !o
+    ? `<div class="viz-empty">Connect to OmniRoute to see this.</div>`
+    : errs.length
+      ? `<div class="err-list">${errs.map((e) => `<div class="err-row"><span>⚠ ${esc(e.type || "unknown")}</span><b>${fmt(e.count)}</b></div>`).join("")}</div>`
+      : `<div class="ok-big">✓ <span>No errors in this range.</span></div>`;
+
+  // History line: tokens per 5-minute interval through Headroom
+  const iv = intervals(hist || []);
+  if (asTable("c-history")) tableView($("#c-history"), ["Time", "Input tokens", "Tokens saved", "Requests"], iv.slice(-200).reverse().map((p) => [new Date(p.t).toLocaleString(), p.tokensIn, p.tokensSaved, p.requests]));
+  else lineChart($("#c-history"), iv.map((p) => ({ t: p.t, v: p.tokensIn })), { label: "Input tokens", emptyText: "Collecting… RouteDeck records a point every 5 minutes while Headroom runs." });
+}
+
+// Samples are running totals; turn them into per-interval amounts. A drop means Headroom restarted.
+function intervals(hist) {
+  const out = [];
+  for (let i = 1; i < hist.length; i++) {
+    const a = hist[i - 1], b = hist[i];
+    const d = (k) => (b[k] >= a[k] ? b[k] - a[k] : b[k]);
+    out.push({ t: b.t, tokensIn: d("tokensIn"), tokensSaved: d("tokensSaved"), requests: d("requests") });
+  }
+  return out;
+}
+
+async function loadHomeActivity() {
+  try {
+    const hist = await api("/api/history?hours=24");
+    lineChart($("#home-activity"), intervals(hist).map((p) => ({ t: p.t, v: p.tokensIn })), {
+      height: 160,
+      label: "Input tokens in 5 min",
+      emptyText: "Collecting… a point is recorded every 5 minutes while Headroom runs.",
+    });
+  } catch {}
+}
+
+let resizeTimer;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if ($("#view-analytics").classList.contains("active")) renderAnalytics();
+    if ($("#view-home").classList.contains("active")) loadHomeActivity();
+  }, 200);
+});
 
 // ---------------------------------------------------------------- logs
 
