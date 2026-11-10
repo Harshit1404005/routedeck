@@ -85,7 +85,7 @@ npm install -g @anthropic-ai/claude-code   # optional, for the Claude Code butto
 **2. Get RouteDeck:**
 
 ```bash
-git clone https://github.com/<your-username>/routedeck
+git clone https://github.com/Harshit1404005/routedeck
 cd routedeck
 ```
 
