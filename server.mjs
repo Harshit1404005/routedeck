@@ -1,0 +1,723 @@
+#!/usr/bin/env node
+// RouteDeck: one-click control panel for Headroom (token compression) and
+// OmniRoute (multi-provider AI router). No dependencies: Node 18+ only.
+
+import http from "node:http";
+import net from "node:net";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawn, execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { CATALOG } from "./lib/catalog.mjs";
+
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const UI_DIR = path.join(ROOT, "ui");
+const IS_WIN = process.platform === "win32";
+const HOME_DIR = path.join(os.homedir(), ".routedeck");
+const CONFIG_FILE = path.join(HOME_DIR, "config.json");
+const APP_PORT = Number(process.env.ROUTEDECK_PORT || 7777);
+
+// ---------------------------------------------------------------- config
+
+const DEFAULTS = {
+  headroom: {
+    enabled: true,
+    command: "", // path to headroom executable; "" = find on PATH
+    port: 8787,
+    optimize: true, // compression on/off
+    kompress: true, // ML text compression
+    cache: true,
+    mode: "cache", // "cache" | "token"
+    shareStats: false, // Headroom's anonymous beacon
+  },
+  omniroute: {
+    enabled: true,
+    dir: "", // source checkout folder; "" = use the `omniroute` command
+    port: 20128,
+    password: "", // dashboard password, used to manage providers
+    apiKey: "", // optional OmniRoute API key for clients
+  },
+  claude: {
+    route: "both", // "both" | "omniroute" | "headroom"
+    model: "",
+    workDir: os.homedir(),
+  },
+  app: {
+    openBrowser: true,
+    startServicesOnLaunch: false,
+    launchAtLogin: false,
+  },
+};
+
+function deepMerge(base, extra) {
+  const out = Array.isArray(base) ? [...base] : { ...base };
+  for (const [k, v] of Object.entries(extra || {})) {
+    if (v && typeof v === "object" && !Array.isArray(v) && typeof base?.[k] === "object") {
+      out[k] = deepMerge(base[k], v);
+    } else if (k in (base || {})) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function loadConfig() {
+  if (!fs.existsSync(CONFIG_FILE)) return structuredClone(DEFAULTS);
+  try {
+    return deepMerge(DEFAULTS, JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")));
+  } catch (e) {
+    // Keep the broken file so the user's settings aren't silently overwritten.
+    const backup = CONFIG_FILE + ".broken";
+    fs.copyFileSync(CONFIG_FILE, backup);
+    console.warn(`Settings file was unreadable (${e.message}). Saved a copy at ${backup}; using defaults.`);
+    return structuredClone(DEFAULTS);
+  }
+}
+
+let config = loadConfig();
+
+function saveConfig() {
+  fs.mkdirSync(HOME_DIR, { recursive: true });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+}
+
+// Never send secrets back to the browser in full.
+function publicConfig() {
+  const c = structuredClone(config);
+  c.omniroute.hasPassword = Boolean(c.omniroute.password);
+  c.omniroute.password = "";
+  c.omniroute.hasApiKey = Boolean(c.omniroute.apiKey);
+  c.omniroute.apiKey = "";
+  return c;
+}
+
+// ---------------------------------------------------------------- logs
+
+const logs = { headroom: [], omniroute: [], routedeck: [] };
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
+function log(service, text) {
+  const buf = logs[service];
+  for (const line of String(text).replace(ANSI, "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    buf.push({ t: Date.now(), line });
+  }
+  if (buf.length > 800) buf.splice(0, buf.length - 800);
+}
+
+// ---------------------------------------------------------------- helpers
+
+function portOpen(port, host = "127.0.0.1", timeout = 800) {
+  return new Promise((resolve) => {
+    const s = net.connect({ port, host });
+    const done = (ok) => {
+      s.destroy();
+      resolve(ok);
+    };
+    s.setTimeout(timeout, () => done(false));
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+  });
+}
+
+async function fetchJson(url, opts = {}, timeoutMs = 4000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...opts, signal: ctrl.signal, redirect: "manual" });
+    const text = await res.text();
+    let body = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = { raw: text.slice(0, 300) };
+    }
+    return { ok: res.ok, status: res.status, headers: res.headers, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function which(cmd) {
+  const dirs = (process.env.PATH || "").split(path.delimiter);
+  const exts = IS_WIN ? [".exe", ".cmd", ".bat", ""] : [""];
+  for (const d of dirs) {
+    for (const e of exts) {
+      const p = path.join(d, cmd + e);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return "";
+}
+
+function pidsOnPort(port) {
+  return new Promise((resolve) => {
+    if (IS_WIN) {
+      execFile("netstat", ["-ano", "-p", "TCP"], { windowsHide: true }, (err, out) => {
+        if (err) return resolve([]);
+        const pids = new Set();
+        for (const line of out.split(/\r?\n/)) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 5 && parts[3] === "LISTENING" && parts[1].endsWith(":" + port)) {
+            pids.add(parts[4]);
+          }
+        }
+        resolve([...pids].filter((p) => p !== "0"));
+      });
+    } else {
+      execFile("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], (err, out) =>
+        resolve(err ? [] : out.split(/\s+/).filter(Boolean))
+      );
+    }
+  });
+}
+
+function killTree(pid) {
+  return new Promise((resolve) => {
+    if (IS_WIN) {
+      execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () =>
+        resolve()
+      );
+    } else {
+      try {
+        process.kill(-Number(pid), "SIGTERM");
+      } catch {
+        try {
+          process.kill(Number(pid), "SIGTERM");
+        } catch {}
+      }
+      resolve();
+    }
+  });
+}
+
+// ---------------------------------------------------------------- services
+
+const children = { headroom: null, omniroute: null };
+const startedAt = { headroom: 0, omniroute: 0 };
+
+function findHeadroom() {
+  if (config.headroom.command && fs.existsSync(config.headroom.command)) {
+    return config.headroom.command;
+  }
+  return which("headroom");
+}
+
+function omnirouteCommand() {
+  const dir = config.omniroute.dir;
+  if (dir && fs.existsSync(path.join(dir, "package.json"))) {
+    return { cmd: "npm", args: ["run", "dev"], cwd: dir, label: `npm run dev (${dir})` };
+  }
+  const bin = which("omniroute");
+  if (bin) return { cmd: bin, args: [], cwd: os.homedir(), label: bin };
+  return null;
+}
+
+function spawnService(name, cmd, args, cwd, env) {
+  log(name, `▶ ${cmd} ${args.join(" ")}`);
+  const child = spawn(cmd, args, {
+    cwd,
+    env: { ...process.env, ...env },
+    shell: IS_WIN && /\.(cmd|bat)$|^npm$/i.test(path.basename(cmd)),
+    windowsHide: true,
+    detached: !IS_WIN,
+  });
+  child.stdout.on("data", (d) => log(name, d));
+  child.stderr.on("data", (d) => log(name, d));
+  child.on("exit", (code) => {
+    log(name, `■ stopped (exit code ${code})`);
+    if (children[name] === child) children[name] = null;
+  });
+  child.on("error", (e) => log(name, `✖ ${e.message}`));
+  children[name] = child;
+  startedAt[name] = Date.now();
+}
+
+async function startOmniRoute() {
+  if (!config.omniroute.enabled) return { skipped: "disabled in settings" };
+  if (await portOpen(config.omniroute.port)) return { alreadyRunning: true };
+  const c = omnirouteCommand();
+  if (!c) {
+    throw new Error("OmniRoute not found. Install it with: npm install -g omniroute");
+  }
+  const env = { PORT: String(config.omniroute.port) };
+  // Windows: SWC refuses cache folders with loose permissions. Use a private one if present.
+  const swcCache = path.join(os.homedir(), ".swc-native-cache");
+  if (IS_WIN && fs.existsSync(swcCache)) env.SWC_NATIVE_BINDING_CACHE = swcCache;
+  spawnService("omniroute", c.cmd, c.args, c.cwd, env);
+  return { started: true, via: c.label };
+}
+
+async function startHeadroom() {
+  if (!config.headroom.enabled) return { skipped: "disabled in settings" };
+  if (await portOpen(config.headroom.port)) return { alreadyRunning: true };
+  const bin = findHeadroom();
+  if (!bin) {
+    throw new Error('Headroom not found. Install it with: pip install "headroom-ai[proxy]"');
+  }
+  const h = config.headroom;
+  const args = ["proxy", "--port", String(h.port), "--mode", h.mode];
+  if (!h.optimize) args.push("--no-optimize");
+  if (!h.cache) args.push("--no-cache");
+  if (!h.kompress) args.push("--disable-kompress");
+  if (config.omniroute.enabled) {
+    const up = `http://127.0.0.1:${config.omniroute.port}`;
+    args.push("--openai-api-url", up, "--anthropic-api-url", up);
+  }
+  const env = { PYTHONUTF8: "1", HEADROOM_BEACON: h.shareStats ? "on" : "off" };
+  spawnService("headroom", bin, args, path.dirname(bin), env);
+  return { started: true, via: bin };
+}
+
+async function stopService(name) {
+  const port = config[name].port;
+  const child = children[name];
+  if (child?.pid) await killTree(child.pid);
+  for (const pid of await pidsOnPort(port)) await killTree(pid);
+  children[name] = null;
+  log(name, "■ stop requested");
+  return { stopped: true };
+}
+
+async function serviceStatus() {
+  const [hOpen, oOpen] = await Promise.all([
+    portOpen(config.headroom.port),
+    portOpen(config.omniroute.port),
+  ]);
+  let headroomHealth = null;
+  if (hOpen) {
+    try {
+      const r = await fetchJson(`http://127.0.0.1:${config.headroom.port}/health`, {}, 2500);
+      headroomHealth = r.body?.status || (r.ok ? "healthy" : "unhealthy");
+    } catch {
+      headroomHealth = "starting";
+    }
+  }
+  const state = (name, open) => {
+    if (!config[name].enabled) return "off";
+    if (open) return "running";
+    if (children[name]) return "starting";
+    return "stopped";
+  };
+  return {
+    headroom: {
+      state: state("headroom", hOpen && headroomHealth !== "starting"),
+      port: config.headroom.port,
+      health: headroomHealth,
+      managed: Boolean(children.headroom),
+      found: Boolean(findHeadroom()),
+      startedAt: startedAt.headroom,
+    },
+    omniroute: {
+      state: state("omniroute", oOpen),
+      port: config.omniroute.port,
+      managed: Boolean(children.omniroute),
+      found: Boolean(omnirouteCommand()),
+      loggedIn: Boolean(session.cookie),
+      startedAt: startedAt.omniroute,
+    },
+    claude: { found: Boolean(which("claude")) },
+  };
+}
+
+// ---------------------------------------------------------------- OmniRoute API
+
+const session = { cookie: "" };
+
+function omniBase() {
+  return `http://127.0.0.1:${config.omniroute.port}`;
+}
+
+async function omniLogin(password = config.omniroute.password) {
+  if (!password) throw httpError(401, "Enter your OmniRoute password in Settings first.");
+  const r = await fetchJson(
+    `${omniBase()}/api/auth/login`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: omniBase() },
+      body: JSON.stringify({ password }),
+    },
+    15000
+  );
+  if (!r.ok) {
+    throw httpError(r.status, r.body?.error?.message || r.body?.error || "Login failed");
+  }
+  const cookies = (r.headers.getSetCookie?.() || [])
+    .map((c) => c.split(";")[0])
+    .filter(Boolean);
+  session.cookie = cookies.join("; ");
+  return true;
+}
+
+async function omni(pathname, { method = "GET", body } = {}, retried = false) {
+  if (!session.cookie) await omniLogin();
+  const headers = { cookie: session.cookie, origin: omniBase() };
+  if (body !== undefined) headers["content-type"] = "application/json";
+  if (method !== "GET") {
+    const csrf = await fetchJson(`${omniBase()}/api/auth/csrf`, { headers }, 8000);
+    if (csrf.body?.token) headers["x-omniroute-csrf"] = csrf.body.token;
+  }
+  const r = await fetchJson(
+    omniBase() + pathname,
+    { method, headers, body: body === undefined ? undefined : JSON.stringify(body) },
+    60000
+  );
+  if (r.status === 401 && !retried) {
+    session.cookie = "";
+    return omni(pathname, { method, body }, true);
+  }
+  if (!r.ok) {
+    const msg =
+      r.body?.error?.message || r.body?.error || r.body?.message || `OmniRoute said ${r.status}`;
+    throw httpError(r.status, typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  return r.body;
+}
+
+function httpError(status, message) {
+  const e = new Error(message);
+  e.status = status;
+  return e;
+}
+
+// ---------------------------------------------------------------- Claude Code
+
+function claudeEnv() {
+  const c = config.claude;
+  const viaHeadroom = c.route !== "omniroute" && config.headroom.enabled;
+  const port = viaHeadroom ? config.headroom.port : config.omniroute.port;
+  const env = { ANTHROPIC_BASE_URL: `http://localhost:${port}` };
+  if (c.route !== "headroom") {
+    env.ANTHROPIC_AUTH_TOKEN = config.omniroute.apiKey || "routedeck";
+  }
+  if (c.model) {
+    for (const k of [
+      "ANTHROPIC_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "CLAUDE_CODE_SUBAGENT_MODEL",
+    ]) {
+      env[k] = c.model;
+    }
+  }
+  return env;
+}
+
+function claudeCommandText() {
+  const env = claudeEnv();
+  if (IS_WIN) {
+    return Object.entries(env)
+      .map(([k, v]) => `set ${k}=${v}`)
+      .concat("claude")
+      .join(" && ");
+  }
+  return (
+    Object.entries(env)
+      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+      .join(" ") + " claude"
+  );
+}
+
+function launchClaude() {
+  if (!which("claude")) {
+    throw httpError(400, "Claude Code is not installed. Run: npm install -g @anthropic-ai/claude-code");
+  }
+  const env = { ...process.env, ...claudeEnv() };
+  const cwd = fs.existsSync(config.claude.workDir) ? config.claude.workDir : os.homedir();
+  if (IS_WIN) {
+    spawn("cmd.exe", ["/c", "start", '"RouteDeck - Claude Code"', "cmd", "/k", "claude"], {
+      cwd,
+      env,
+      detached: true,
+      stdio: "ignore",
+      windowsVerbatimArguments: true,
+    }).unref();
+  } else if (process.platform === "darwin") {
+    const script = `cd ${JSON.stringify(cwd)} && ${claudeCommandText()}`;
+    spawn("osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(script)}`], {
+      detached: true,
+      stdio: "ignore",
+    }).unref();
+  } else {
+    spawn("x-terminal-emulator", ["-e", "claude"], { cwd, env, detached: true, stdio: "ignore" }).unref();
+  }
+  log("routedeck", `Opened Claude Code in ${cwd} via ${claudeEnv().ANTHROPIC_BASE_URL}`);
+  return { launched: true };
+}
+
+// ---------------------------------------------------------------- launch at login (Windows)
+
+function startupFile() {
+  return path.join(
+    process.env.APPDATA || "",
+    "Microsoft",
+    "Windows",
+    "Start Menu",
+    "Programs",
+    "Startup",
+    "RouteDeck.cmd"
+  );
+}
+
+function applyLaunchAtLogin() {
+  if (!IS_WIN) return;
+  const f = startupFile();
+  if (config.app.launchAtLogin) {
+    const node = process.execPath;
+    fs.writeFileSync(
+      f,
+      `@echo off\r\nstart "" /min "${node}" "${path.join(ROOT, "server.mjs")}" --background\r\n`
+    );
+  } else if (fs.existsSync(f)) {
+    fs.unlinkSync(f);
+  }
+}
+
+// ---------------------------------------------------------------- HTTP API
+
+async function readBody(req) {
+  let data = "";
+  for await (const chunk of req) {
+    data += chunk;
+    if (data.length > 1e6) throw httpError(413, "Body too large");
+  }
+  return data ? JSON.parse(data) : {};
+}
+
+const routes = {
+  "GET /api/status": async () => serviceStatus(),
+  "POST /api/start": async ({ body }) => {
+    const which_ = body.service || "all";
+    const out = {};
+    // OmniRoute first so Headroom has somewhere to send traffic.
+    if (which_ === "all" || which_ === "omniroute") out.omniroute = await startOmniRoute();
+    if (which_ === "all" || which_ === "headroom") out.headroom = await startHeadroom();
+    return out;
+  },
+  "POST /api/stop": async ({ body }) => {
+    const which_ = body.service || "all";
+    const out = {};
+    if (which_ === "all" || which_ === "headroom") out.headroom = await stopService("headroom");
+    if (which_ === "all" || which_ === "omniroute") out.omniroute = await stopService("omniroute");
+    return out;
+  },
+  "POST /api/restart": async ({ body }) => {
+    await routes["POST /api/stop"]({ body });
+    await new Promise((r) => setTimeout(r, 1500));
+    return routes["POST /api/start"]({ body });
+  },
+  "GET /api/logs": async ({ url }) => {
+    const svc = url.searchParams.get("service") || "headroom";
+    const since = Number(url.searchParams.get("since") || 0);
+    return { lines: (logs[svc] || []).filter((l) => l.t > since).slice(-400) };
+  },
+  "GET /api/config": async () => publicConfig(),
+  "POST /api/config": async ({ body }) => {
+    const incoming = structuredClone(body);
+    // Blank secret fields mean "keep the saved one".
+    if (incoming.omniroute) {
+      if (!incoming.omniroute.password) delete incoming.omniroute.password;
+      if (!incoming.omniroute.apiKey) delete incoming.omniroute.apiKey;
+      if (incoming.omniroute.password) session.cookie = "";
+    }
+    config = deepMerge(config, incoming);
+    saveConfig();
+    applyLaunchAtLogin();
+    return publicConfig();
+  },
+  "POST /api/config/clear-secret": async ({ body }) => {
+    if (body.field === "password") {
+      config.omniroute.password = "";
+      session.cookie = "";
+    }
+    if (body.field === "apiKey") config.omniroute.apiKey = "";
+    saveConfig();
+    return publicConfig();
+  },
+  "GET /api/detect": async () => ({
+    headroom: findHeadroom(),
+    omniroute: omnirouteCommand()?.label || "",
+    claude: which("claude"),
+    node: process.version,
+    platform: process.platform,
+  }),
+  "POST /api/omniroute/login": async ({ body }) => {
+    await omniLogin(body.password || config.omniroute.password);
+    if (body.password && body.remember !== false) {
+      config.omniroute.password = body.password;
+      saveConfig();
+    }
+    return { loggedIn: true };
+  },
+  "GET /api/catalog": async () => CATALOG,
+  "GET /api/providers": async () => {
+    const data = await omni("/api/providers");
+    const list = data?.connections || data?.providers || data || [];
+    return (Array.isArray(list) ? list : []).map((c) => ({
+      id: c.id,
+      provider: c.provider,
+      name: c.name || c.displayName || c.provider,
+      isActive: c.isActive !== false && c.is_active !== 0,
+      testStatus: c.testStatus || c.test_status || "",
+      lastError: c.lastError || c.last_error || "",
+      apiKey: c.apiKey || "",
+    }));
+  },
+  "POST /api/providers": async ({ body }) => {
+    const entry = CATALOG.find((p) => p.id === body.provider);
+    const payload = {
+      provider: body.provider,
+      name: body.name || entry?.name || body.provider,
+    };
+    if (body.apiKey) payload.apiKey = String(body.apiKey).trim();
+    else payload.allowNoCredential = true;
+    const created = await omni("/api/providers", { method: "POST", body: payload });
+    return created;
+  },
+  "POST /api/providers/toggle": async ({ body }) =>
+    omni(`/api/providers/${encodeURIComponent(body.id)}`, {
+      method: "PUT",
+      body: { isActive: Boolean(body.isActive) },
+    }),
+  "POST /api/providers/test": async ({ body }) =>
+    omni(`/api/providers/${encodeURIComponent(body.id)}/test`, { method: "POST", body: {} }),
+  "POST /api/providers/delete": async ({ body }) =>
+    omni(`/api/providers/${encodeURIComponent(body.id)}`, { method: "DELETE" }),
+  "GET /api/models": async () => {
+    const data = await omni("/v1/models");
+    const list = (data?.data || []).map((m) => m.id).filter(Boolean);
+    return [...new Set(list)].sort();
+  },
+  "GET /api/savings": async () => {
+    if (!(await portOpen(config.headroom.port))) return { running: false };
+    const r = await fetchJson(`http://127.0.0.1:${config.headroom.port}/stats`, {}, 5000);
+    const s = r.body?.summary || {};
+    return {
+      running: true,
+      requests: s.api_requests || 0,
+      compressed: s.compression?.requests_compressed || 0,
+      tokensSaved: s.compression?.total_tokens_saved_all_layers || 0,
+      tokensBefore: s.compression?.total_tokens_before || 0,
+      avgPct: s.compression?.avg_compression_pct || 0,
+      bestPct: s.compression?.best_compression_pct || 0,
+      usdSaved: s.cost?.total_saved_usd || 0,
+    };
+  },
+  "GET /api/claude/command": async () => ({ command: claudeCommandText(), env: claudeEnv() }),
+  "POST /api/claude/launch": async () => launchClaude(),
+  "POST /api/open": async ({ body }) => {
+    const target =
+      body.target === "omniroute"
+        ? `http://localhost:${config.omniroute.port}/dashboard`
+        : body.target === "headroom"
+          ? `http://localhost:${config.headroom.port}/dashboard`
+          : "";
+    if (!target) throw httpError(400, "Unknown target");
+    openBrowser(target);
+    return { opened: target };
+  },
+};
+
+function openBrowser(url) {
+  const [cmd, args] = IS_WIN
+    ? ["cmd.exe", ["/c", "start", "", url]]
+    : process.platform === "darwin"
+      ? ["open", [url]]
+      : ["xdg-open", [url]];
+  spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true }).unref();
+}
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+};
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+
+  // Only answer this machine. Blocks other sites from driving the API (DNS rebinding / CSRF).
+  const host = (req.headers.host || "").split(":")[0];
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(host)) {
+    res.writeHead(403).end("Forbidden");
+    return;
+  }
+  if (req.method !== "GET" && req.headers.origin && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.origin)) {
+    res.writeHead(403).end("Forbidden origin");
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/")) {
+    const handler = routes[`${req.method} ${url.pathname}`];
+    if (!handler) {
+      res.writeHead(404, { "content-type": "application/json" }).end('{"error":"Not found"}');
+      return;
+    }
+    try {
+      const body = req.method === "GET" ? {} : await readBody(req);
+      const result = await handler({ body, url });
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(result ?? {}));
+    } catch (e) {
+      const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+      if (status >= 500) log("routedeck", `✖ ${req.method} ${url.pathname}: ${e.message}`);
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: e.name === "AbortError" ? "Timed out" : e.message }));
+    }
+    return;
+  }
+
+  const rel = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+  const file = path.join(UI_DIR, path.normalize(rel));
+  if (!file.startsWith(UI_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    res.writeHead(404).end("Not found");
+    return;
+  }
+  res.writeHead(200, {
+    "content-type": MIME[path.extname(file)] || "application/octet-stream",
+    "cache-control": "no-store",
+  });
+  fs.createReadStream(file).pipe(res);
+});
+
+// ---------------------------------------------------------------- boot
+
+const background = process.argv.includes("--background");
+
+server.on("error", (e) => {
+  if (e.code === "EADDRINUSE") {
+    console.log(`RouteDeck is already running at http://localhost:${APP_PORT}`);
+    if (!background) openBrowser(`http://localhost:${APP_PORT}`);
+    process.exit(0);
+  }
+  throw e;
+});
+
+server.listen(APP_PORT, "127.0.0.1", async () => {
+  const url = `http://localhost:${APP_PORT}`;
+  console.log(`\n  RouteDeck is running at ${url}\n  Keep this window open. Close it to quit RouteDeck.\n`);
+  log("routedeck", `RouteDeck started at ${url}`);
+  if (config.app.startServicesOnLaunch || background) {
+    routes["POST /api/start"]({ body: { service: "all" } }).catch((e) =>
+      log("routedeck", `✖ auto-start: ${e.message}`)
+    );
+  }
+  if (config.app.openBrowser && !background && !process.argv.includes("--no-browser")) {
+    openBrowser(url);
+  }
+});
+
+async function shutdown() {
+  // Services RouteDeck started stop with it; ones you started yourself keep running.
+  for (const name of Object.keys(children)) {
+    if (children[name]?.pid) await killTree(children[name].pid);
+  }
+  process.exit(0);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

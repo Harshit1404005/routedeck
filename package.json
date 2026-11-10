@@ -1,0 +1,13 @@
+{
+  "name": "routedeck",
+  "version": "0.1.0",
+  "description": "One-click control panel for Headroom (token compression) and OmniRoute (free multi-provider AI router). Paste keys, press start, use Claude Code for free.",
+  "type": "module",
+  "bin": { "routedeck": "server.mjs" },
+  "main": "server.mjs",
+  "scripts": { "start": "node server.mjs" },
+  "files": ["server.mjs", "lib", "ui", "README.md", "LICENSE"],
+  "engines": { "node": ">=18.17" },
+  "keywords": ["claude-code", "llm", "ai-router", "omniroute", "headroom", "free-llm", "token-compression", "dashboard"],
+  "license": "MIT"
+}

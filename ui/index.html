@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RouteDeck</title>
+  <link rel="icon" href="logo.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="logo.svg" alt="" width="30" height="30" />
+        <div>
+          <div class="brand-name">RouteDeck</div>
+          <div class="brand-sub">Headroom + OmniRoute</div>
+        </div>
+      </div>
+      <nav class="nav" id="nav">
+        <button data-view="home" class="active"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+        <button data-view="providers"><svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7"/></svg>Providers <span class="badge" id="nav-prov-count"></span></button>
+        <button data-view="claude"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6 M12 19h8"/></svg>Claude Code</button>
+        <button data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
+        <button data-view="logs"><svg viewBox="0 0 24 24"><path d="M4 6h16 M4 12h16 M4 18h10"/></svg>Logs</button>
+      </nav>
+      <div class="sidebar-foot">
+        <button class="theme-toggle" id="theme-toggle" title="Switch light / dark">
+          <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          <span>Theme</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- HOME -->
+      <section class="view active" id="view-home">
+        <header class="page-head">
+          <div>
+            <h1>Your AI, routed and compressed</h1>
+            <p class="muted">One click starts everything. Prompts get smaller with Headroom, then OmniRoute picks a provider.</p>
+          </div>
+          <button class="power" id="power-btn">
+            <svg viewBox="0 0 24 24"><path d="M12 2v10 M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+            <span id="power-label">Start everything</span>
+          </button>
+        </header>
+
+        <div class="flow card" id="flow">
+          <div class="node" id="node-client">
+            <div class="node-icon"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6 M12 19h8"/></svg></div>
+            <div class="node-title">Your apps</div>
+            <div class="node-sub">Claude Code, scripts</div>
+          </div>
+          <div class="link" id="link-1"><span></span></div>
+          <div class="node" id="node-headroom">
+            <div class="node-icon"><svg viewBox="0 0 24 24"><path d="M4 14h6v6 M20 10h-6V4 M14 10l7-7 M3 21l7-7"/></svg></div>
+            <div class="node-title">Headroom</div>
+            <div class="node-sub"><span class="dot"></span><span class="node-state">stopped</span></div>
+          </div>
+          <div class="link" id="link-2"><span></span></div>
+          <div class="node" id="node-omniroute">
+            <div class="node-icon"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M8.5 6h2a3 3 0 0 1 3 3v0a3 3 0 0 0 2 2.8 M8.5 18h2a3 3 0 0 0 3-3v0a3 3 0 0 1 2-2.8"/></svg></div>
+            <div class="node-title">OmniRoute</div>
+            <div class="node-sub"><span class="dot"></span><span class="node-state">stopped</span></div>
+          </div>
+          <div class="link" id="link-3"><span></span></div>
+          <div class="node" id="node-providers">
+            <div class="node-icon"><svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/></svg></div>
+            <div class="node-title">Providers</div>
+            <div class="node-sub" id="prov-summary">none yet</div>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat card"><div class="stat-label">Tokens saved</div><div class="stat-value" id="s-saved">–</div><div class="stat-foot muted" id="s-saved-foot">by Headroom</div></div>
+          <div class="stat card"><div class="stat-label">Requests</div><div class="stat-value" id="s-req">–</div><div class="stat-foot muted" id="s-req-foot">since Headroom started</div></div>
+          <div class="stat card"><div class="stat-label">Average compression</div><div class="stat-value" id="s-avg">–</div><div class="stat-foot muted" id="s-best">&nbsp;</div></div>
+          <div class="stat card"><div class="stat-label">Money saved</div><div class="stat-value" id="s-usd">–</div><div class="stat-foot muted">estimated</div></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h2>Get started</h2>
+            <ol class="steps" id="steps">
+              <li data-step="engines"><span class="check"></span><div><b>Start the engines</b><span class="muted">Press <i>Start everything</i>. The first start takes about a minute.</span></div></li>
+              <li data-step="login"><span class="check"></span><div><b>Connect to OmniRoute</b><span class="muted">Enter your OmniRoute password once, in <a href="#" data-goto="settings">Settings</a>.</span></div></li>
+              <li data-step="provider"><span class="check"></span><div><b>Add a provider</b><span class="muted">Paste a free API key in <a href="#" data-goto="providers">Providers</a>.</span></div></li>
+              <li data-step="claude"><span class="check"></span><div><b>Launch Claude Code</b><span class="muted">One click in <a href="#" data-goto="claude">Claude Code</a>.</span></div></li>
+            </ol>
+          </div>
+          <div class="card">
+            <h2>Quick actions</h2>
+            <div class="actions">
+              <button class="btn primary" id="qa-claude"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6 M12 19h8"/></svg>Launch Claude Code</button>
+              <button class="btn" id="qa-omni"><svg viewBox="0 0 24 24"><path d="M14 3h7v7 M10 14L21 3 M21 14v7H3V3h7"/></svg>OmniRoute dashboard</button>
+              <button class="btn" id="qa-head"><svg viewBox="0 0 24 24"><path d="M14 3h7v7 M10 14L21 3 M21 14v7H3V3h7"/></svg>Headroom savings page</button>
+            </div>
+            <div class="endpoints">
+              <div class="muted small">Point any app here:</div>
+              <div class="copyrow"><span class="label">Anthropic</span><code id="ep-anthropic"></code><button class="icon-btn" data-copy="ep-anthropic" title="Copy">⧉</button></div>
+              <div class="copyrow"><span class="label">OpenAI</span><code id="ep-openai"></code><button class="icon-btn" data-copy="ep-openai" title="Copy">⧉</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PROVIDERS -->
+      <section class="view" id="view-providers">
+        <header class="page-head">
+          <div>
+            <h1>Providers</h1>
+            <p class="muted">Add free API keys. OmniRoute spreads your requests across them and falls back when one is busy.</p>
+          </div>
+        </header>
+        <div class="notice" id="prov-notice" hidden></div>
+
+        <div class="card" id="connected-card">
+          <div class="card-head"><h2>Connected</h2><button class="btn small" id="prov-refresh">Refresh</button></div>
+          <div id="connected-list" class="connected-list"><div class="empty muted">Nothing connected yet.</div></div>
+        </div>
+
+        <div class="card-head spaced">
+          <h2>Add a provider</h2>
+          <div class="chips" id="filter-chips">
+            <button class="chip active" data-filter="all">All</button>
+            <button class="chip" data-filter="recommended">Recommended</button>
+            <button class="chip" data-filter="coding">Coding</button>
+            <button class="chip" data-filter="keyless">No key needed</button>
+          </div>
+        </div>
+        <div class="catalog" id="catalog"></div>
+        <p class="muted small">Need something not listed (OAuth sign-in, Gemini CLI, Cloudflare)? Use the <a href="#" id="prov-open-omni">full OmniRoute dashboard</a>.</p>
+      </section>
+
+      <!-- CLAUDE -->
+      <section class="view" id="view-claude">
+        <header class="page-head">
+          <div>
+            <h1>Claude Code</h1>
+            <p class="muted">Open Claude Code in a terminal with everything already wired up.</p>
+          </div>
+        </header>
+        <div class="card">
+          <h2>Route</h2>
+          <div class="radio-cards" id="route-cards">
+            <label class="radio-card"><input type="radio" name="route" value="both" /><div><b>Headroom → OmniRoute</b><span class="muted">Compress, then use your free providers. Recommended.</span></div></label>
+            <label class="radio-card"><input type="radio" name="route" value="omniroute" /><div><b>OmniRoute only</b><span class="muted">Use your providers without compression.</span></div></label>
+            <label class="radio-card"><input type="radio" name="route" value="headroom" /><div><b>Headroom → Anthropic</b><span class="muted">Your own Claude account, with compression. OmniRoute is skipped.</span></div></label>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <h2>Model</h2>
+            <p class="muted small">Pick which OmniRoute model Claude Code uses. Leave on default to use Claude's own names.</p>
+            <div class="row">
+              <select id="model-select"><option value="">Default (Claude's own model names)</option></select>
+              <button class="btn small" id="model-reload">Reload</button>
+            </div>
+            <input id="model-custom" placeholder="…or type a model id, e.g. gemini/gemini-3.5-flash" />
+          </div>
+          <div class="card">
+            <h2>Project folder</h2>
+            <p class="muted small">Claude Code opens in this folder.</p>
+            <input id="workdir" placeholder="C:\Users\you\projects\my-app" />
+          </div>
+        </div>
+        <div class="card launch-card">
+          <button class="btn primary big" id="claude-launch"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg>Launch Claude Code</button>
+          <div class="cmd">
+            <div class="muted small">Or run this yourself in a terminal:</div>
+            <div class="copyrow"><code id="claude-cmd"></code><button class="icon-btn" data-copy="claude-cmd" title="Copy">⧉</button></div>
+          </div>
+        </div>
+        <p class="muted small">Note: the Claude desktop app can't be routed. It always talks to Anthropic directly. This works with Claude Code in a terminal.</p>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="view" id="view-settings">
+        <header class="page-head">
+          <div><h1>Settings</h1><p class="muted">Changes save automatically. Restart a service to apply its settings.</p></div>
+        </header>
+
+        <div class="card">
+          <div class="card-head"><h2>Headroom <span class="muted small">token compression</span></h2><button class="btn small" data-restart="headroom">Restart Headroom</button></div>
+          <div class="settings">
+            <label class="toggle-row"><div><b>Use Headroom</b><span class="muted">Turn off to skip compression entirely.</span></div><input type="checkbox" class="switch" data-key="headroom.enabled" /></label>
+            <label class="toggle-row"><div><b>Compression</b><span class="muted">Shrink logs, JSON and tool output before they're sent.</span></div><input type="checkbox" class="switch" data-key="headroom.optimize" /></label>
+            <label class="toggle-row"><div><b>Smart text compression (Kompress)</b><span class="muted">ML model for plain text. Uses a bit more memory.</span></div><input type="checkbox" class="switch" data-key="headroom.kompress" /></label>
+            <label class="toggle-row"><div><b>Response cache</b><span class="muted">Reuse answers to identical requests.</span></div><input type="checkbox" class="switch" data-key="headroom.cache" /></label>
+            <label class="toggle-row"><div><b>Mode</b><span class="muted"><i>Cache</i> keeps provider prompt caching working. <i>Token</i> compresses harder.</span></div>
+              <select data-key="headroom.mode"><option value="cache">Cache-friendly</option><option value="token">Max savings</option></select></label>
+            <label class="toggle-row"><div><b>Share anonymous usage stats</b><span class="muted">Headroom's opt-in telemetry. Off by default.</span></div><input type="checkbox" class="switch" data-key="headroom.shareStats" /></label>
+            <label class="field-row"><div><b>Port</b></div><input type="number" data-key="headroom.port" /></label>
+            <label class="field-row"><div><b>Headroom program</b><span class="muted" id="det-headroom"></span></div><input data-key="headroom.command" placeholder="Leave empty to find it automatically" /></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>OmniRoute <span class="muted small">router</span></h2><button class="btn small" data-restart="omniroute">Restart OmniRoute</button></div>
+          <div class="settings">
+            <label class="toggle-row"><div><b>Use OmniRoute</b><span class="muted">Turn off to send traffic straight to Anthropic or OpenAI.</span></div><input type="checkbox" class="switch" data-key="omniroute.enabled" /></label>
+            <div class="field-row"><div><b>Dashboard password</b><span class="muted" id="pw-state">Lets RouteDeck manage your providers. Saved only on this computer.</span></div>
+              <div class="row"><input type="password" id="omni-password" placeholder="OmniRoute password" autocomplete="current-password" /><button class="btn small primary" id="omni-login">Connect</button></div></div>
+            <div class="field-row"><div><b>OmniRoute API key</b><span class="muted" id="key-state">Optional. Only if you turned on "require API key" in OmniRoute.</span></div>
+              <div class="row"><input type="password" id="omni-apikey" placeholder="sk-…" autocomplete="off" /><button class="btn small" id="omni-apikey-save">Save</button></div></div>
+            <label class="field-row"><div><b>Port</b></div><input type="number" data-key="omniroute.port" /></label>
+            <label class="field-row"><div><b>OmniRoute folder</b><span class="muted" id="det-omniroute"></span></div><input data-key="omniroute.dir" placeholder="Leave empty to use the installed omniroute command" /></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>App</h2>
+          <div class="settings">
+            <label class="toggle-row"><div><b>Start everything when RouteDeck opens</b><span class="muted">Truly one click: open RouteDeck and it's ready.</span></div><input type="checkbox" class="switch" data-key="app.startServicesOnLaunch" /></label>
+            <label class="toggle-row"><div><b>Open this page automatically</b><span class="muted">When RouteDeck starts.</span></div><input type="checkbox" class="switch" data-key="app.openBrowser" /></label>
+            <label class="toggle-row" id="row-login"><div><b>Start with Windows</b><span class="muted">Run RouteDeck and all services in the background when you sign in.</span></div><input type="checkbox" class="switch" data-key="app.launchAtLogin" /></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- LOGS -->
+      <section class="view" id="view-logs">
+        <header class="page-head">
+          <div><h1>Logs</h1><p class="muted">Live output from each service.</p></div>
+          <div class="chips" id="log-tabs">
+            <button class="chip active" data-log="headroom">Headroom</button>
+            <button class="chip" data-log="omniroute">OmniRoute</button>
+            <button class="chip" data-log="routedeck">RouteDeck</button>
+          </div>
+        </header>
+        <pre class="logbox card" id="logbox"></pre>
+      </section>
+    </main>
+  </div>
+  <div class="toasts" id="toasts"></div>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
