@@ -14,6 +14,10 @@ const state = {
   logService: "headroom",
   logSince: 0,
   busy: false,
+  engineStatus: null,
+  activeClient: "claude",
+  clients: null,
+  quotaHealth: null,
 };
 
 // ---------------------------------------------------------------- utils
@@ -83,14 +87,18 @@ async function withBusy(btn, fn) {
 // ---------------------------------------------------------------- navigation
 
 function show(view) {
-  $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
-  $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${view}`));
-  if (view === "providers") loadProviders();
-  if (view === "claude") { refreshClaudeCommand(); loadPonytail(); }
-  if (view === "analytics") loadAnalytics();
-  if (view === "home") loadHomeActivity();
-  if (view === "logs") { state.logSince = 0; $("#logbox").textContent = ""; pollLogs(); }
-  try { localStorage.setItem("rd-view", view); } catch {}
+  const normView = (view === "claude" || view === "clients") ? "clients" : view;
+  $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === normView || (normView === "clients" && b.dataset.view === "claude")));
+  $$(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${normView}`));
+  if (normView === "providers") loadProviders();
+  if (normView === "clients") { refreshClients(); loadPonytail(); }
+  if (normView === "analytics") loadAnalytics();
+  if (normView === "home") loadHomeActivity();
+  if (normView === "logs") { state.logSince = 0; $("#logbox").textContent = ""; pollLogs(); }
+  try {
+    localStorage.setItem("rd-view", normView);
+    if (location.hash !== "#" + normView) history.replaceState(null, "", "#" + normView);
+  } catch {}
 }
 
 $("#nav").addEventListener("click", (e) => {
@@ -131,6 +139,197 @@ async function refreshStatus() {
     return;
   }
   renderStatus();
+  checkEngineStatus();
+  loadQuotaHealth();
+}
+
+async function loadQuotaHealth() {
+  try {
+    state.quotaHealth = await api("/api/providers/health");
+    renderQuotaHealth();
+  } catch {}
+}
+
+function renderQuotaHealth() {
+  const data = state.quotaHealth;
+  if (!data) return;
+
+  const counts = data.counts || { active: 0, rateLimited: 0, error: 0, inactive: 0 };
+  $("#quota-cnt-active").textContent = counts.active;
+  $("#quota-cnt-limited").textContent = counts.rateLimited;
+  $("#quota-cnt-error").textContent = counts.error;
+
+  const summaryEl = $("#quota-summary-text");
+  if (!data.running) {
+    summaryEl.textContent = "OmniRoute is stopped. Start engines to monitor free provider quotas.";
+  } else if (data.total === 0) {
+    summaryEl.textContent = "No providers connected yet. Add free API keys in Providers tab.";
+  } else {
+    summaryEl.textContent = `${counts.active} active · ${counts.rateLimited} rate-limited · ${counts.error} error · ${data.total} total connected`;
+  }
+
+  // Render Segmented Health Bar
+  const track = $("#quota-bar-track");
+  if (!data.running || data.total === 0) {
+    track.innerHTML = `<div class="quota-bar-empty">${data.running ? "No providers connected yet" : "OmniRoute is stopped"}</div>`;
+  } else {
+    track.innerHTML = data.providers.map((p) => {
+      const pct = (100 / data.total).toFixed(1);
+      const title = `${esc(p.name)}: ${esc(p.status)}${p.lastError ? ` (${esc(p.lastError)})` : ""}`;
+      return `<div class="quota-segment ${esc(p.status)}" style="width:${pct}%" title="${title}"></div>`;
+    }).join("");
+  }
+
+  // Render Providers Grid
+  const grid = $("#quota-providers-grid");
+  if (!data.running) {
+    grid.innerHTML = `<div class="empty muted small">OmniRoute is stopped. Start everything above to monitor provider rate limits.</div>`;
+  } else if (data.total === 0) {
+    grid.innerHTML = `<div class="empty muted small">Nothing connected yet. <a href="#" data-goto="providers">Connect a free provider →</a></div>`;
+  } else {
+    grid.innerHTML = data.providers.map((p) => {
+      const isOk = p.status === "active";
+      const isLimited = p.status === "rate_limited";
+      const isBad = p.status === "error";
+
+      const pillClass = isOk ? "ok" : isLimited ? "rate-limited" : isBad ? "bad" : "";
+      const pillText = isOk ? "active" : isLimited ? "rate-limited (429)" : isBad ? "error" : "off";
+
+      return `<div class="quota-chip">
+        <div class="avatar" style="background:${colorFor(p.provider)}">${esc(initials(p.name))}</div>
+        <div class="quota-chip-meta">
+          <div class="quota-chip-name" title="${esc(p.name)}">${esc(p.name)}</div>
+          <div class="quota-chip-tier">${esc(p.freeTier)}</div>
+        </div>
+        <span class="pill ${pillClass}">${esc(pillText)}</span>
+      </div>`;
+    }).join("");
+  }
+
+  // Quick-Switcher rate-limit alert & hot-swap
+  const rateLimited = (data.providers || []).filter((p) => p.status === "rate_limited");
+  const qsRateAlert = $("#qs-rate-alert");
+  if (qsRateAlert) {
+    if (rateLimited.length > 0) {
+      qsRateAlert.hidden = false;
+      const rBadge = $("#qs-rate-badge");
+      if (rBadge) rBadge.textContent = `⚠️ ${rateLimited[0].name} Rate-Limited`;
+    } else {
+      qsRateAlert.hidden = true;
+    }
+  }
+}
+
+async function checkEngineStatus() {
+  try {
+    state.engineStatus = await api("/api/engines/status");
+    renderEngineBanner();
+  } catch {}
+}
+
+function renderEngineBanner() {
+  const banner = $("#engine-installer-banner");
+  if (!banner) return;
+  const es = state.engineStatus;
+  if (!es || !es.missing || es.missing.length === 0) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  const names = es.missing.map((m) => m === "omniroute" ? "OmniRoute" : "Headroom").join(" and ");
+  $("#engine-banner-title").textContent = `${names} Not Installed`;
+  $("#engine-banner-desc").textContent = `${names} ${es.missing.length > 1 ? "are" : "is"} required to route and compress AI prompts. Click below to install automatically.`;
+
+  const warnEl = $("#engine-prereq-warning");
+  if (es.warnings && es.warnings.length > 0) {
+    warnEl.hidden = false;
+    warnEl.innerHTML = es.warnings.map((w) => `<div>⚠ ${esc(w)}</div>`).join("");
+    if (!es.canInstall) {
+      $("#btn-install-engines").disabled = true;
+      $("#btn-install-engines").title = "Missing prerequisites. Please install Python or Node first.";
+    } else {
+      $("#btn-install-engines").disabled = false;
+      $("#btn-install-engines").title = "";
+    }
+  } else {
+    warnEl.hidden = true;
+    $("#btn-install-engines").disabled = false;
+    $("#btn-install-engines").title = "";
+  }
+}
+
+function setupEngineInstaller() {
+  const btn = $("#btn-install-engines");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const progressCard = $("#engine-install-progress-card");
+    const logTerminal = $("#engine-install-log");
+    const statusEl = $("#install-progress-status");
+    const pctEl = $("#install-progress-pct");
+    const fillEl = $("#install-progress-fill");
+
+    btn.disabled = true;
+    progressCard.hidden = false;
+    logTerminal.textContent = "Connecting to installation stream...\n";
+    statusEl.textContent = "Starting installer…";
+    pctEl.textContent = "5%";
+    fillEl.style.width = "5%";
+    fillEl.style.background = "";
+
+    const evtSource = new EventSource("/api/engines/install/stream");
+
+    evtSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === "start") {
+          statusEl.textContent = `Installing ${data.missing.join(", ")}…`;
+          pctEl.textContent = "15%";
+          fillEl.style.width = "15%";
+          logTerminal.textContent += `[RouteDeck] Starting installation: ${data.missing.join(", ")}\n`;
+        } else if (data.type === "step") {
+          statusEl.textContent = data.message;
+          const pct = Math.round(15 + ((data.index - 1) / data.total) * 70);
+          pctEl.textContent = `${pct}%`;
+          fillEl.style.width = `${pct}%`;
+          logTerminal.textContent += `\n[Step ${data.index}/${data.total}] ${data.message}\n> ${data.cmd}\n`;
+        } else if (data.type === "log") {
+          logTerminal.textContent += data.line + "\n";
+          logTerminal.scrollTop = logTerminal.scrollHeight;
+        } else if (data.type === "step-success") {
+          logTerminal.textContent += `[Success] ${data.message}\n`;
+        } else if (data.type === "done") {
+          evtSource.close();
+          statusEl.textContent = "✓ Installation complete!";
+          pctEl.textContent = "100%";
+          fillEl.style.width = "100%";
+          fillEl.style.background = "var(--ok)";
+          logTerminal.textContent += `\n[Finished] ${data.message}\n`;
+          toast("Missing engines installed successfully!", "ok");
+          btn.disabled = false;
+          setTimeout(() => {
+            checkEngineStatus();
+            refreshStatus();
+          }, 1500);
+        } else if (data.type === "error") {
+          evtSource.close();
+          btn.disabled = false;
+          statusEl.textContent = "✖ Installation encountered an error";
+          pctEl.textContent = "Failed";
+          fillEl.style.background = "var(--bad)";
+          logTerminal.textContent += `\n[Error] ${data.message}\n`;
+          toast(`Install error: ${data.message}`, "bad");
+        }
+      } catch (err) {
+        logTerminal.textContent += `Parse error: ${err.message}\n`;
+      }
+    };
+
+    evtSource.onerror = (err) => {
+      evtSource.close();
+      btn.disabled = false;
+      statusEl.textContent = "Installer stream closed";
+    };
+  });
 }
 
 function renderStatus() {
@@ -163,6 +362,15 @@ function renderStatus() {
   setStep("login", s.omniroute.loggedIn || state.providers.length > 0);
   setStep("provider", state.providers.length > 0);
   setStep("claude", localStorage.getItem("rd-launched") === "1");
+
+  // Quick-Switcher bar updates
+  const hrRunning = h === "running";
+  $("#qs-hr-dot")?.classList.toggle("running", hrRunning);
+  const currentMode = state.config?.headroom?.mode || "cache";
+  $$(".qs-mode-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === currentMode));
+  if (state.config?.claude?.model && $("#qs-model-select") && !$("#qs-model-select").value) {
+    $("#qs-model-select").value = state.config.claude.model;
+  }
 
   const hPort = s.headroom.port, oPort = s.omniroute.port;
   const front = h !== "off" ? hPort : oPort;
@@ -220,6 +428,41 @@ $("#qa-omni").addEventListener("click", () => api("/api/open", { target: "omniro
 $("#qa-head").addEventListener("click", () => api("/api/open", { target: "headroom" }).catch((e) => toast(e.message, "bad")));
 $("#prov-open-omni").addEventListener("click", (e) => { e.preventDefault(); api("/api/open", { target: "omniroute" }); });
 
+function updateKeylessStatus() {
+  const btn = $("#btn-connect-keyless");
+  const msg = $("#keyless-status-msg");
+  if (!btn) return;
+  const canonical = (id) => (id === "kilo-gateway" ? "kilocode" : id);
+  const keylessCanonical = new Set(["kilocode", "pollinations", "ovhcloud", "aihorde"]);
+  const connectedKeyless = new Set(
+    state.providers
+      .map((p) => canonical(p.provider))
+      .filter((id) => keylessCanonical.has(id))
+  );
+  const count = connectedKeyless.size;
+  if (count >= 4) {
+    btn.disabled = true;
+    btn.textContent = "✓ All 4 Free Providers Connected";
+    if (msg) msg.textContent = "Kilo Code, Pollinations, OVHcloud AI, and AI Horde are active";
+  } else {
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>Connect All 4 Free Providers`;
+    if (msg) msg.textContent = `${count}/4 keyless providers connected`;
+  }
+}
+
+$("#btn-connect-keyless")?.addEventListener("click", (e) =>
+  withBusy(e.currentTarget, async () => {
+    e.currentTarget.textContent = "Connecting free providers…";
+    const res = await api("/api/providers/connect-keyless", {});
+    toast(`Connected ${res.connectedCount} free providers!`, "ok");
+    await loadProviders();
+    await loadQuotaHealth();
+    await refreshStatus();
+    updateKeylessStatus();
+  })
+);
+
 // ---------------------------------------------------------------- providers
 
 async function loadProviders() {
@@ -233,6 +476,7 @@ async function loadProviders() {
   }
   renderProviders();
   renderStatus();
+  updateKeylessStatus();
 }
 
 function renderProviders() {
@@ -422,38 +666,185 @@ $$("[data-restart]").forEach((b) =>
   )
 );
 
-// ---------------------------------------------------------------- claude
+// ---------------------------------------------------------------- AI Clients (Claude Code, Cursor, OpenCode, Cline, Aider)
 
-$("#route-cards").addEventListener("change", (e) => saveConfig({ claude: { route: e.target.value } }, true).then(refreshClaudeCommand));
-$("#workdir").addEventListener("change", (e) => saveConfig({ claude: { workDir: e.target.value.trim() } }, true).then(refreshClaudeCommand));
+const CLIENT_AVATARS = {
+  claude: "🟣",
+  cursor: "🔵",
+  opencode: "🟢",
+  cline: "🟠",
+  aider: "🟣",
+};
+
+$("#route-cards").addEventListener("change", (e) => saveConfig({ claude: { route: e.target.value } }, true).then(refreshClients));
+$("#workdir").addEventListener("change", (e) => saveConfig({ claude: { workDir: e.target.value.trim() } }, true).then(refreshClients));
 $("#model-select").addEventListener("change", (e) => {
   $("#model-custom").value = e.target.value;
-  saveConfig({ claude: { model: e.target.value } }, true).then(refreshClaudeCommand);
+  saveConfig({ claude: { model: e.target.value } }, true).then(refreshClients);
 });
-$("#model-custom").addEventListener("change", (e) => saveConfig({ claude: { model: e.target.value.trim() } }, true).then(refreshClaudeCommand));
+$("#model-custom").addEventListener("change", (e) => saveConfig({ claude: { model: e.target.value.trim() } }, true).then(refreshClients));
 $("#model-reload").addEventListener("click", (e) => withBusy(e.target, loadModels));
 
-async function loadModels() {
-  const models = await api("/api/models");
-  const sel = $("#model-select");
-  const current = state.config?.claude.model || "";
-  sel.innerHTML = `<option value="">Default (Claude's own model names)</option>` +
-    models.map((m) => `<option value="${esc(m)}" ${m === current ? "selected" : ""}>${esc(m)}</option>`).join("");
-  toast(`${models.length} models available`, "ok");
+async function setHeadroomMode(mode) {
+  $$(".qs-mode-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
+  const sel = $('[data-key="headroom.mode"]');
+  if (sel) sel.value = mode;
+  const spinner = $("#qs-mode-spinner");
+  if (spinner) spinner.hidden = false;
+  try {
+    const res = await api("/api/headroom/mode", { mode });
+    if (state.config?.headroom) state.config.headroom.mode = mode;
+    toast(res.reloaded ? `Switched Headroom to ${mode === "cache" ? "Cache-Friendly" : "Max Savings"} mode (reloaded)` : `Headroom mode set to ${mode}`, "ok");
+  } catch (e) {
+    toast(e.message, "bad");
+  } finally {
+    if (spinner) spinner.hidden = true;
+    refreshStatus();
+  }
 }
 
-async function refreshClaudeCommand() {
+$("#qs-btn-cache")?.addEventListener("click", () => setHeadroomMode("cache"));
+$("#qs-btn-token")?.addEventListener("click", () => setHeadroomMode("token"));
+
+$("#qs-model-select")?.addEventListener("change", async (e) => {
+  const model = e.target.value.trim();
   try {
-    const r = await api("/api/claude/command");
-    $("#claude-cmd").textContent = r.command;
+    await api("/api/model/switch", { model });
+    if (state.config?.claude) state.config.claude.model = model;
+    if ($("#model-select")) $("#model-select").value = model;
+    if ($("#model-custom")) $("#model-custom").value = model;
+    toast(model ? `Active routing model set to ${model}` : "Active routing model set to Auto", "ok");
+    refreshClients();
+  } catch (err) {
+    toast(err.message, "bad");
+  }
+});
+
+$("#qs-btn-swap-model")?.addEventListener("click", async () => {
+  const healthy = (state.quotaHealth?.providers || []).find((p) => p.status === "active");
+  let targetModel = "";
+  if (healthy) {
+    const pName = (healthy.provider || "").toLowerCase();
+    if (pName.includes("gemini")) targetModel = "gemini/gemini-2.5-flash";
+    else if (pName.includes("groq")) targetModel = "groq/llama-3.3-70b-versatile";
+    else if (pName.includes("pollinations")) targetModel = "pollinations/openai";
+    else if (pName.includes("ovhcloud")) targetModel = "ovhcloud/deepseek-r1-distill-llama-70b";
+    else if (pName.includes("kilo")) targetModel = "kilo/free";
+    else targetModel = healthy.name || "";
+  }
+  if (!targetModel) targetModel = "gemini/gemini-2.5-flash";
+  try {
+    await api("/api/model/switch", { model: targetModel });
+    if (state.config?.claude) state.config.claude.model = targetModel;
+    if ($("#qs-model-select")) $("#qs-model-select").value = targetModel;
+    if ($("#model-select")) $("#model-select").value = targetModel;
+    if ($("#model-custom")) $("#model-custom").value = targetModel;
+    toast(`Hot-swapped routing to healthy model: ${targetModel}`, "ok");
+    refreshClients();
+    $("#qs-rate-alert").hidden = true;
+  } catch (err) {
+    toast(err.message, "bad");
+  }
+});
+
+async function loadModels() {
+  let models = [];
+  try {
+    models = await api("/api/models");
+  } catch {}
+  const presets = [
+    "gemini/gemini-2.5-flash",
+    "groq/llama-3.3-70b-versatile",
+    "pollinations/openai",
+    "ovhcloud/deepseek-r1-distill-llama-70b",
+    "kilo/free",
+  ];
+  const allModels = [...new Set([...(Array.isArray(models) ? models : []), ...presets])];
+  const current = state.config?.claude.model || "";
+  const optionsHtml = `<option value="">Auto (Default OmniRoute)</option>` +
+    allModels.map((m) => `<option value="${esc(m)}" ${m === current ? "selected" : ""}>${esc(m)}</option>`).join("");
+  if ($("#model-select")) $("#model-select").innerHTML = optionsHtml;
+  if ($("#qs-model-select")) $("#qs-model-select").innerHTML = optionsHtml;
+  if (current && $("#qs-model-select")) $("#qs-model-select").value = current;
+  if (models && models.length > 0) toast(`${models.length} models available`, "ok");
+}
+
+async function refreshClients() {
+  const c = state.config?.claude || {};
+  const workDir = $("#workdir")?.value || c.workDir || "";
+  const model = $("#model-custom")?.value || c.model || "";
+  const route = $(`#route-cards input[name="route"]:checked`)?.value || c.route || "both";
+
+  try {
+    const q = new URLSearchParams({ workDir, model, route });
+    const data = await api(`/api/clients/status?${q.toString()}`);
+    state.clients = data.clients || {};
+    renderActiveClient();
   } catch {}
 }
 
-$("#claude-launch").addEventListener("click", (e) =>
+function renderActiveClient() {
+  const id = state.activeClient || "claude";
+  const client = state.clients?.[id];
+  if (!client) return;
+
+  $("#client-avatar").textContent = CLIENT_AVATARS[id] || "⚡";
+  $("#client-name").textContent = client.name;
+  $("#client-tagline").textContent = client.tagline;
+
+  const pill = $("#client-status-pill");
+  if (client.installed) {
+    pill.className = "pill ok";
+    pill.textContent = "✓ installed";
+  } else {
+    pill.className = "pill";
+    pill.textContent = "not in PATH";
+  }
+
+  $("#client-config-heading").textContent = `Configuration (${client.configFile || "Auto"})`;
+  $("#client-config-label").textContent = client.configType === "file" ? `Generates ${client.configFile} in project folder` : "Applied to environment on launch";
+  $("#client-config-code").textContent = client.configSnippet;
+
+  $("#client-launch-label").textContent = `Launch ${client.name}`;
+  $("#client-cmd-code").textContent = client.launchCommand;
+
+  const ponytailCard = $("#claude-ponytail-card");
+  if (ponytailCard) ponytailCard.hidden = (id !== "claude");
+
+  // Highlight active chip
+  $$("#client-chips .chip").forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.client === id);
+  });
+}
+
+$("#client-chips")?.addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-client]");
+  if (!chip) return;
+  state.activeClient = chip.dataset.client;
+  renderActiveClient();
+});
+
+$("#client-config-btn")?.addEventListener("click", (e) =>
   withBusy(e.currentTarget, async () => {
-    await api("/api/claude/launch", {});
+    const id = state.activeClient || "claude";
+    const workDir = $("#workdir").value.trim();
+    const model = $("#model-custom").value.trim();
+    const route = $(`#route-cards input[name="route"]:checked`)?.value || "both";
+    const res = await api("/api/clients/configure", { client: id, workDir, model, route });
+    toast(res.message || `Configured ${id}`, "ok");
+    refreshClients();
+  })
+);
+
+$("#client-launch-btn")?.addEventListener("click", (e) =>
+  withBusy(e.currentTarget, async () => {
+    const id = state.activeClient || "claude";
+    const workDir = $("#workdir").value.trim();
+    const model = $("#model-custom").value.trim();
+    const route = $(`#route-cards input[name="route"]:checked`)?.value || "both";
+    await api("/api/clients/launch", { client: id, workDir, model, route });
     try { localStorage.setItem("rd-launched", "1"); } catch {}
-    toast("Claude Code is opening in a new window", "ok");
+    toast(`${state.clients?.[id]?.name || id} is opening in a new window`, "ok");
     renderStatus();
   })
 );
@@ -490,11 +881,11 @@ $("#pt-install").addEventListener("click", (e) => {
     await api(removing ? "/api/ponytail/uninstall" : "/api/ponytail/install", {});
     toast(removing ? "Ponytail removed" : "Ponytail installed. It's active in new Claude Code sessions.", "ok");
     await loadPonytail(true);
-    refreshClaudeCommand();
+    refreshClients();
   }).finally(() => loadPonytail());
 });
 $("#pt-mode").addEventListener("change", (e) =>
-  saveConfig({ claude: { ponytailMode: e.target.value } }, true).then(refreshClaudeCommand)
+  saveConfig({ claude: { ponytailMode: e.target.value } }, true).then(refreshClients)
 );
 
 // ---------------------------------------------------------------- analytics
@@ -672,16 +1063,25 @@ async function pollLogs() {
 // ---------------------------------------------------------------- boot
 
 (async function boot() {
-  await Promise.all([loadConfig().catch(() => {}), refreshStatus()]);
+  setupEngineInstaller();
+  await Promise.all([loadConfig().catch(() => {}), refreshStatus(), checkEngineStatus().catch(() => {}), loadQuotaHealth().catch(() => {})]);
   api("/api/detect").then((d) => {
     $("#det-headroom").textContent = d.headroom ? `Found: ${d.headroom}` : 'Not found. Install with: pip install "headroom-ai[proxy]"';
     $("#det-omniroute").textContent = d.omniroute ? `Using: ${d.omniroute}` : "Not found. Install with: npm install -g omniroute";
-    if (d.platform !== "win32") $("#row-login").hidden = true;
+    const osName = d.platform === "win32" ? "Windows" : d.platform === "darwin" ? "macOS" : d.platform === "linux" ? "Linux" : "OS";
+    if ($("#lbl-login")) $("#lbl-login").textContent = `Start with ${osName}`;
+    if ($("#lbl-login-sub")) $("#lbl-login-sub").textContent = `Run RouteDeck and all services automatically when you sign in to ${osName}.`;
   }).catch(() => {});
+  loadModels().catch(() => {});
   if (state.status?.omniroute.state === "running") loadProviders();
   refreshSavings();
   let start = "home";
-  try { start = localStorage.getItem("rd-view") || "home"; } catch {}
+  try {
+    const hash = location.hash.replace(/^#/, "");
+    start = (hash && ["home", "analytics", "providers", "clients", "claude", "settings", "logs"].includes(hash))
+      ? hash
+      : localStorage.getItem("rd-view") || "home";
+  } catch {}
   show(start);
   setInterval(refreshStatus, 2500);
   setInterval(refreshSavings, 6000);

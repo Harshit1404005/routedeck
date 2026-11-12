@@ -7,7 +7,7 @@ import net from "node:net";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { CATALOG } from "./lib/catalog.mjs";
 
@@ -48,6 +48,7 @@ const DEFAULTS = {
     openBrowser: true,
     startServicesOnLaunch: false,
     launchAtLogin: false,
+    silentBackground: false,
   },
 };
 
@@ -140,8 +141,29 @@ async function fetchJson(url, opts = {}, timeoutMs = 4000) {
   }
 }
 
+function getSearchDirs() {
+  const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  if (IS_WIN) {
+    if (process.env.APPDATA) {
+      dirs.push(path.join(process.env.APPDATA, "npm"));
+    }
+    if (process.env.LOCALAPPDATA) {
+      dirs.push(path.join(process.env.LOCALAPPDATA, "Programs", "Python", "Python312", "Scripts"));
+      dirs.push(path.join(process.env.LOCALAPPDATA, "Programs", "Python", "Python311", "Scripts"));
+      dirs.push(path.join(process.env.LOCALAPPDATA, "Programs", "Python", "Python310", "Scripts"));
+      dirs.push(path.join(process.env.LOCALAPPDATA, "Programs", "Python", "Python312"));
+      dirs.push(path.join(process.env.LOCALAPPDATA, "Programs", "Python", "Python311"));
+      dirs.push(path.join(process.env.LOCALAPPDATA, "Programs", "Python", "Python310"));
+    }
+    for (const d of ["D:\\Python312\\Scripts", "D:\\Python312", "C:\\Python312\\Scripts", "C:\\Python312"]) {
+      if (fs.existsSync(d)) dirs.push(d);
+    }
+  }
+  return [...new Set(dirs)];
+}
+
 function which(cmd) {
-  const dirs = (process.env.PATH || "").split(path.delimiter);
+  const dirs = getSearchDirs();
   const exts = IS_WIN ? [".exe", ".cmd", ".bat", ""] : [""];
   for (const d of dirs) {
     for (const e of exts) {
@@ -150,6 +172,43 @@ function which(cmd) {
     }
   }
   return "";
+}
+
+function testPython(bin) {
+  try {
+    execFileSync(bin, ["--version"], { stdio: "ignore", timeout: 3000, windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findPython() {
+  for (const name of ["python", "python3", "py"]) {
+    const p = which(name);
+    if (p && testPython(p)) return { cmd: name, path: p };
+  }
+  if (IS_WIN) {
+    const candidates = [
+      "D:\\Python312\\python.exe",
+      "C:\\Python312\\python.exe",
+      "C:\\Python311\\python.exe",
+      "C:\\Python310\\python.exe",
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "python.exe"),
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python311", "python.exe"),
+      path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "python.exe"),
+    ];
+    for (const cand of candidates) {
+      if (fs.existsSync(cand) && testPython(cand)) return { cmd: cand, path: cand };
+    }
+  }
+  return null;
+}
+
+function findNpm() {
+  const p = which("npm");
+  if (p) return { cmd: "npm", path: p };
+  return null;
 }
 
 function pidsOnPort(port) {
@@ -202,7 +261,14 @@ function findHeadroom() {
   if (config.headroom.command && fs.existsSync(config.headroom.command)) {
     return config.headroom.command;
   }
-  return which("headroom");
+  const bin = which("headroom");
+  if (bin) return bin;
+  const py = findPython();
+  if (py?.path) {
+    const inPyScripts = path.join(path.dirname(py.path), "Scripts", IS_WIN ? "headroom.exe" : "headroom");
+    if (fs.existsSync(inPyScripts)) return inPyScripts;
+  }
+  return "";
 }
 
 function omnirouteCommand() {
@@ -212,7 +278,212 @@ function omnirouteCommand() {
   }
   const bin = which("omniroute");
   if (bin) return { cmd: bin, args: [], cwd: os.homedir(), label: bin };
+  if (IS_WIN && process.env.APPDATA) {
+    const appdataOmni = path.join(process.env.APPDATA, "npm", "omniroute.cmd");
+    if (fs.existsSync(appdataOmni)) return { cmd: appdataOmni, args: [], cwd: os.homedir(), label: appdataOmni };
+  }
   return null;
+}
+
+// ---------------------------------------------------------------- dependency installer
+
+function checkEngines() {
+  const python = findPython();
+  const npm = findNpm();
+
+  const omniCmd = omnirouteCommand();
+  const omnirouteInstalled = Boolean(omniCmd);
+
+  const headroomBin = findHeadroom();
+  const headroomInstalled = Boolean(headroomBin);
+
+  const missing = [];
+  if (!omnirouteInstalled) missing.push("omniroute");
+  if (!headroomInstalled) missing.push("headroom");
+
+  const warnings = [];
+  if (!npm && !omnirouteInstalled) {
+    warnings.push("Node.js / npm is required to install OmniRoute. Download from https://nodejs.org/");
+  }
+  if (!python && !headroomInstalled) {
+    warnings.push("Python 3 & pip are required to install Headroom. Download from https://www.python.org/downloads/ (ensure 'Add Python to PATH' is checked).");
+  }
+
+  const canInstall = (!missing.includes("omniroute") || Boolean(npm)) &&
+                     (!missing.includes("headroom") || Boolean(python));
+
+  return {
+    missing,
+    canInstall,
+    omniroute: {
+      installed: omnirouteInstalled,
+      path: omniCmd?.label || "",
+    },
+    headroom: {
+      installed: headroomInstalled,
+      path: headroomBin || "",
+    },
+    prerequisites: {
+      node: { found: true, version: process.version },
+      npm: { found: Boolean(npm), path: npm?.path || "" },
+      python: { found: Boolean(python), path: python?.path || "", cmd: python?.cmd || "" },
+    },
+    warnings,
+  };
+}
+
+let isInstalling = false;
+
+function runStreamingCommand(cmd, args, onLine, timeoutMs = 300000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      shell: IS_WIN && !cmd.toLowerCase().endsWith(".exe"),
+      windowsHide: true,
+      env: process.env,
+    });
+    let buffer = "";
+    const handleData = (chunk) => {
+      buffer += chunk.toString("utf8");
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.trim()) onLine(line.replace(ANSI, ""));
+      }
+    };
+    child.stdout.on("data", handleData);
+    child.stderr.on("data", handleData);
+
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("Installation timed out after 5 minutes"));
+    }, timeoutMs);
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      if (buffer.trim()) onLine(buffer.replace(ANSI, ""));
+      if (code === 0) resolve();
+      else reject(new Error(`Command failed with exit code ${code}`));
+    });
+  });
+}
+
+async function handleInstallStream({ req, res }) {
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    "connection": "keep-alive",
+    "access-control-allow-origin": "*",
+  });
+
+  const send = (data) => {
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
+  };
+
+  if (isInstalling) {
+    send({ type: "error", message: "An installation is already running. Please wait for it to complete." });
+    res.end();
+    return;
+  }
+
+  isInstalling = true;
+
+  try {
+    const status = checkEngines();
+    if (status.missing.length === 0) {
+      send({ type: "done", message: "All engines are already installed!", engines: status });
+      res.end();
+      return;
+    }
+
+    if (status.warnings.length > 0 && !status.canInstall) {
+      send({
+        type: "error",
+        message: "Cannot install missing engines due to missing requirements:\n• " + status.warnings.join("\n• "),
+        warnings: status.warnings,
+        engines: status,
+      });
+      res.end();
+      return;
+    }
+
+    send({
+      type: "start",
+      missing: status.missing,
+      totalSteps: status.missing.length,
+      message: `Starting installation for: ${status.missing.join(", ")}`,
+    });
+
+    let currentStep = 0;
+    for (const eng of status.missing) {
+      currentStep++;
+      if (eng === "omniroute") {
+        send({
+          type: "step",
+          step: "omniroute",
+          index: currentStep,
+          total: status.missing.length,
+          message: "Installing OmniRoute via npm (npm install -g omniroute)...",
+          cmd: "npm install -g omniroute",
+        });
+        log("routedeck", "▶ npm install -g omniroute");
+
+        const npmCmd = IS_WIN ? "cmd.exe" : "npm";
+        const npmArgs = IS_WIN ? ["/c", "npm", "install", "-g", "omniroute"] : ["install", "-g", "omniroute"];
+
+        await runStreamingCommand(npmCmd, npmArgs, (line) => {
+          log("omniroute", line);
+          send({ type: "log", step: "omniroute", line });
+        });
+
+        send({ type: "step-success", step: "omniroute", message: "✓ OmniRoute successfully installed!" });
+      } else if (eng === "headroom") {
+        const py = status.prerequisites.python?.cmd || (status.prerequisites.python?.path ? status.prerequisites.python.path : "python");
+        const cmdDisplay = `${py} -m pip install "headroom-ai[proxy]"`;
+
+        send({
+          type: "step",
+          step: "headroom",
+          index: currentStep,
+          total: status.missing.length,
+          message: `Installing Headroom via pip (${cmdDisplay})...`,
+          cmd: cmdDisplay,
+        });
+        log("routedeck", `▶ ${cmdDisplay}`);
+
+        const pyArgs = ["-m", "pip", "install", "headroom-ai[proxy]"];
+        await runStreamingCommand(py, pyArgs, (line) => {
+          log("headroom", line);
+          send({ type: "log", step: "headroom", line });
+        });
+
+        send({ type: "step-success", step: "headroom", message: "✓ Headroom successfully installed!" });
+      }
+    }
+
+    const postStatus = checkEngines();
+    send({
+      type: "done",
+      success: true,
+      message: "✓ All engines installed and ready to start!",
+      engines: postStatus,
+    });
+    res.end();
+  } catch (err) {
+    send({
+      type: "error",
+      message: `Installation failed: ${err.message}`,
+    });
+    res.end();
+  } finally {
+    isInstalling = false;
+  }
 }
 
 function spawnService(name, cmd, args, cwd, env) {
@@ -382,7 +653,305 @@ function httpError(status, message) {
   return e;
 }
 
-// ---------------------------------------------------------------- Claude Code
+// ---------------------------------------------------------------- AI Clients (Claude Code, Cursor, OpenCode, Cline, Aider)
+
+const CLIENTS = {
+  claude: {
+    id: "claude",
+    name: "Claude Code",
+    tagline: "Anthropic's terminal-based agentic coding tool",
+    bin: "claude",
+    installNote: "Run: npm install -g @anthropic-ai/claude-code",
+    configType: "env",
+    configFile: "Environment variables",
+  },
+  cursor: {
+    id: "cursor",
+    name: "Cursor",
+    tagline: "AI-first code editor with OpenAI/Anthropic model support",
+    bin: "cursor",
+    installNote: "Download Cursor from https://cursor.com",
+    configType: "file",
+    configFile: ".cursor/settings.json",
+  },
+  opencode: {
+    id: "opencode",
+    name: "OpenCode",
+    tagline: "Open-source terminal coding agent & code interpreter",
+    bin: "opencode",
+    installNote: "Run: pip install opencode-ai (or npm install -g opencode)",
+    configType: "file",
+    configFile: "opencode.json",
+  },
+  cline: {
+    id: "cline",
+    name: "Cline",
+    tagline: "Autonomous coding agent extension for VS Code",
+    bin: "code",
+    installNote: "Install VS Code and the Cline extension",
+    configType: "file",
+    configFile: ".vscode/settings.json",
+  },
+  aider: {
+    id: "aider",
+    name: "Aider",
+    tagline: "AI pair programming in your terminal",
+    bin: "aider",
+    installNote: "Run: pip install aider-chat",
+    configType: "file",
+    configFile: ".aider.conf.yml",
+  },
+};
+
+function getEndpointUrls(route = config.claude.route) {
+  const viaHeadroom = route !== "omniroute" && config.headroom.enabled;
+  const port = viaHeadroom ? config.headroom.port : config.omniroute.port;
+  const apiKey = (route !== "headroom" && config.omniroute.apiKey) || "routedeck";
+  return {
+    port,
+    anthropicBaseUrl: `http://localhost:${port}`,
+    openaiBaseUrl: `http://localhost:${port}/v1`,
+    apiKey,
+  };
+}
+
+function getClientDetails(clientId, targetDir, model, route) {
+  const dir = targetDir || config.claude.workDir || os.homedir();
+  const ep = getEndpointUrls(route);
+  const effectiveModel = model || config.claude.model || "gemini/gemini-2.5-flash";
+  const def = CLIENTS[clientId] || CLIENTS.claude;
+  const isInstalled = Boolean(which(def.bin));
+
+  let configSnippet = "";
+  let launchCmd = "";
+
+  if (clientId === "claude") {
+    launchCmd = claudeCommandText();
+    configSnippet = `# Environment variables automatically configured on launch:\nANTHROPIC_BASE_URL=${ep.anthropicBaseUrl}\nANTHROPIC_AUTH_TOKEN=${ep.apiKey}\n${effectiveModel ? `ANTHROPIC_MODEL=${effectiveModel}\n` : ""}`;
+  } else if (clientId === "cursor") {
+    launchCmd = IS_WIN ? `cursor "${dir}"` : `cursor ${JSON.stringify(dir)}`;
+    configSnippet = JSON.stringify({
+      "cursor.openaiBaseUrl": ep.openaiBaseUrl,
+      "cursor.openaiApiKey": ep.apiKey,
+      "cursor.model": effectiveModel,
+    }, null, 2);
+  } else if (clientId === "cline") {
+    launchCmd = IS_WIN ? `code "${dir}"` : `code ${JSON.stringify(dir)}`;
+    configSnippet = JSON.stringify({
+      "cline.apiProvider": "openai-compatible",
+      "cline.openAiBaseUrl": ep.openaiBaseUrl,
+      "cline.openAiApiKey": ep.apiKey,
+      "cline.openAiModelId": effectiveModel,
+    }, null, 2);
+  } else if (clientId === "opencode") {
+    launchCmd = IS_WIN
+      ? `set OPENAI_BASE_URL=${ep.openaiBaseUrl} && set OPENAI_API_KEY=${ep.apiKey} && opencode`
+      : `OPENAI_BASE_URL=${ep.openaiBaseUrl} OPENAI_API_KEY=${ep.apiKey} opencode`;
+    configSnippet = JSON.stringify({
+      "api_base": ep.openaiBaseUrl,
+      "api_key": ep.apiKey,
+      "model": effectiveModel,
+    }, null, 2);
+  } else if (clientId === "aider") {
+    launchCmd = `aider --openai-api-base ${ep.openaiBaseUrl} --openai-api-key ${ep.apiKey} --model openai/${effectiveModel}`;
+    configSnippet = `# .aider.conf.yml\nopenai-api-base: ${ep.openaiBaseUrl}\nopenai-api-key: ${ep.apiKey}\nmodel: openai/${effectiveModel}\nanalytics: false\n`;
+  }
+
+  return {
+    ...def,
+    installed: isInstalled,
+    launchCommand: launchCmd,
+    configSnippet,
+    endpoints: ep,
+  };
+}
+
+function configureClient(clientId, targetDir, model, route) {
+  const dir = targetDir && fs.existsSync(targetDir) ? targetDir : (config.claude.workDir && fs.existsSync(config.claude.workDir) ? config.claude.workDir : os.homedir());
+  const ep = getEndpointUrls(route);
+  const effectiveModel = model || config.claude.model || "gemini/gemini-2.5-flash";
+
+  if (clientId === "cursor") {
+    const cursorDir = path.join(dir, ".cursor");
+    fs.mkdirSync(cursorDir, { recursive: true });
+    const settingsPath = path.join(cursorDir, "settings.json");
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch {}
+    existing["cursor.openaiBaseUrl"] = ep.openaiBaseUrl;
+    existing["cursor.openaiApiKey"] = ep.apiKey;
+    if (effectiveModel) existing["cursor.model"] = effectiveModel;
+    fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2), "utf8");
+
+    const rulesPath = path.join(dir, ".cursorrules");
+    if (!fs.existsSync(rulesPath)) {
+      fs.writeFileSync(rulesPath, `# RouteDeck AI Configuration\n# Base URL: ${ep.openaiBaseUrl}\n# Model: ${effectiveModel}\n`, "utf8");
+    }
+    return {
+      success: true,
+      file: settingsPath,
+      message: `Configured Cursor settings in ${settingsPath}`,
+    };
+  }
+
+  if (clientId === "cline") {
+    const vscodeDir = path.join(dir, ".vscode");
+    fs.mkdirSync(vscodeDir, { recursive: true });
+    const settingsPath = path.join(vscodeDir, "settings.json");
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(settingsPath, "utf8")); } catch {}
+    existing["cline.apiProvider"] = "openai-compatible";
+    existing["cline.openAiBaseUrl"] = ep.openaiBaseUrl;
+    existing["cline.openAiApiKey"] = ep.apiKey;
+    if (effectiveModel) existing["cline.openAiModelId"] = effectiveModel;
+    fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2), "utf8");
+    return {
+      success: true,
+      file: settingsPath,
+      message: `Configured Cline (VS Code) settings in ${settingsPath}`,
+    };
+  }
+
+  if (clientId === "opencode") {
+    const configPath = path.join(dir, "opencode.json");
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(configPath, "utf8")); } catch {}
+    existing.api_base = ep.openaiBaseUrl;
+    existing.api_key = ep.apiKey;
+    if (effectiveModel) existing.model = effectiveModel;
+    fs.writeFileSync(configPath, JSON.stringify(existing, null, 2), "utf8");
+    return {
+      success: true,
+      file: configPath,
+      message: `Configured OpenCode in ${configPath}`,
+    };
+  }
+
+  if (clientId === "aider") {
+    const configPath = path.join(dir, ".aider.conf.yml");
+    const yml = [
+      `# RouteDeck Aider Configuration`,
+      `openai-api-base: ${ep.openaiBaseUrl}`,
+      `openai-api-key: ${ep.apiKey}`,
+      effectiveModel ? `model: openai/${effectiveModel}` : `model: openai/gemini/gemini-2.5-flash`,
+      `analytics: false`,
+    ].join("\n") + "\n";
+    fs.writeFileSync(configPath, yml, "utf8");
+    return {
+      success: true,
+      file: configPath,
+      message: `Configured Aider in ${configPath}`,
+    };
+  }
+
+  if (clientId === "claude") {
+    return {
+      success: true,
+      message: "Claude Code is configured via environment variables automatically when launched.",
+    };
+  }
+
+  throw httpError(400, `Unknown client: ${clientId}`);
+}
+
+function launchClient(clientId, targetDir, model, route) {
+  const cwd = targetDir && fs.existsSync(targetDir) ? targetDir : (config.claude.workDir && fs.existsSync(config.claude.workDir) ? config.claude.workDir : os.homedir());
+  const ep = getEndpointUrls(route);
+  const effectiveModel = model || config.claude.model || "";
+
+  if (clientId === "claude") {
+    return launchClaude();
+  }
+
+  if (clientId === "cursor") {
+    const bin = which("cursor");
+    if (!bin) {
+      throw httpError(400, "Cursor CLI ('cursor') not found. Please install Cursor and ensure 'cursor' is added to PATH.");
+    }
+    configureClient("cursor", cwd, model, route);
+    spawn(bin, [cwd], { detached: true, stdio: "ignore", shell: IS_WIN }).unref();
+    log("routedeck", `Opened Cursor in ${cwd}`);
+    return { launched: true, client: "cursor" };
+  }
+
+  if (clientId === "cline") {
+    const bin = which("code");
+    if (!bin) {
+      throw httpError(400, "VS Code CLI ('code') not found. Please install VS Code and ensure 'code' is added to PATH.");
+    }
+    configureClient("cline", cwd, model, route);
+    spawn(bin, [cwd], { detached: true, stdio: "ignore", shell: IS_WIN }).unref();
+    log("routedeck", `Opened VS Code (Cline) in ${cwd}`);
+    return { launched: true, client: "cline" };
+  }
+
+  if (clientId === "opencode") {
+    const bin = which("opencode");
+    if (!bin) {
+      throw httpError(400, "OpenCode not found. Install it with: pip install opencode-ai (or npm install -g opencode)");
+    }
+    const env = {
+      ...process.env,
+      OPENAI_BASE_URL: ep.openaiBaseUrl,
+      OPENAI_API_KEY: ep.apiKey,
+      ...(effectiveModel ? { OPENAI_MODEL: effectiveModel } : {}),
+    };
+    if (IS_WIN) {
+      spawn("cmd.exe", ["/c", "start", '"RouteDeck - OpenCode"', "cmd", "/k", "opencode"], {
+        cwd,
+        env,
+        detached: true,
+        stdio: "ignore",
+        windowsVerbatimArguments: true,
+      }).unref();
+    } else if (process.platform === "darwin") {
+      const script = `cd ${JSON.stringify(cwd)} && OPENAI_BASE_URL=${JSON.stringify(ep.openaiBaseUrl)} OPENAI_API_KEY=${JSON.stringify(ep.apiKey)} opencode`;
+      spawn("osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(script)}`], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    } else {
+      spawn("x-terminal-emulator", ["-e", "opencode"], { cwd, env, detached: true, stdio: "ignore" }).unref();
+    }
+    log("routedeck", `Opened OpenCode in ${cwd}`);
+    return { launched: true, client: "opencode" };
+  }
+
+  if (clientId === "aider") {
+    const bin = which("aider");
+    if (!bin) {
+      throw httpError(400, "Aider not found. Install it with: pip install aider-chat");
+    }
+    const aiderModel = effectiveModel ? `openai/${effectiveModel}` : "openai/gemini/gemini-2.5-flash";
+    const aiderArgs = ["--openai-api-base", ep.openaiBaseUrl, "--openai-api-key", ep.apiKey, "--model", aiderModel];
+    const env = {
+      ...process.env,
+      OPENAI_API_BASE: ep.openaiBaseUrl,
+      OPENAI_API_KEY: ep.apiKey,
+    };
+    if (IS_WIN) {
+      const fullCmd = `aider ${aiderArgs.join(" ")}`;
+      spawn("cmd.exe", ["/c", "start", '"RouteDeck - Aider"', "cmd", "/k", fullCmd], {
+        cwd,
+        env,
+        detached: true,
+        stdio: "ignore",
+        windowsVerbatimArguments: true,
+      }).unref();
+    } else if (process.platform === "darwin") {
+      const script = `cd ${JSON.stringify(cwd)} && aider ${aiderArgs.map(x => JSON.stringify(x)).join(" ")}`;
+      spawn("osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(script)}`], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    } else {
+      spawn("x-terminal-emulator", ["-e", `aider ${aiderArgs.join(" ")}`], { cwd, env, detached: true, stdio: "ignore" }).unref();
+    }
+    log("routedeck", `Opened Aider in ${cwd}`);
+    return { launched: true, client: "aider" };
+  }
+
+  throw httpError(400, `Unknown client: ${clientId}`);
+}
 
 function claudeEnv() {
   const c = config.claude;
@@ -529,29 +1098,83 @@ async function sampleHistory() {
 
 // ---------------------------------------------------------------- launch at login (Windows)
 
-function startupFile() {
-  return path.join(
-    process.env.APPDATA || "",
-    "Microsoft",
-    "Windows",
-    "Start Menu",
-    "Programs",
-    "Startup",
-    "RouteDeck.cmd"
-  );
+// ---------------------------------------------------------------- launch at login (Cross-Platform)
+
+function getAutostartPath() {
+  if (IS_WIN) {
+    return path.join(
+      process.env.APPDATA || "",
+      "Microsoft",
+      "Windows",
+      "Start Menu",
+      "Programs",
+      "Startup",
+      "RouteDeck.cmd"
+    );
+  }
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "LaunchAgents", "com.routedeck.app.plist");
+  }
+  return path.join(os.homedir(), ".config", "autostart", "routedeck.desktop");
 }
 
 function applyLaunchAtLogin() {
-  if (!IS_WIN) return;
-  const f = startupFile();
+  const f = getAutostartPath();
+  const dir = path.dirname(f);
   if (config.app.launchAtLogin) {
-    const node = process.execPath;
-    fs.writeFileSync(
-      f,
-      `@echo off\r\nstart "" /min "${node}" "${path.join(ROOT, "server.mjs")}" --background\r\n`
-    );
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const node = process.execPath;
+      const script = path.join(ROOT, "server.mjs");
+      if (IS_WIN) {
+        fs.writeFileSync(
+          f,
+          `@echo off\r\nstart "" /min "${node}" "${script}" --background\r\n`
+        );
+      } else if (process.platform === "darwin") {
+        const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.routedeck.app</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${node}</string>
+        <string>${script}</string>
+        <string>--background</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>\n`;
+        fs.writeFileSync(f, plist, "utf8");
+      } else {
+        const desktop = `[Desktop Entry]
+Type=Application
+Version=1.0
+Name=RouteDeck
+Comment=Start RouteDeck AI router in background
+Exec="${node}" "${script}" --background
+Terminal=false
+Hidden=false
+X-GNOME-Autostart-enabled=true
+`;
+        fs.writeFileSync(f, desktop, "utf8");
+      }
+      log("routedeck", `Configured OS autostart at ${f}`);
+    } catch (e) {
+      log("routedeck", `Failed to set autostart: ${e.message}`);
+    }
   } else if (fs.existsSync(f)) {
-    fs.unlinkSync(f);
+    try {
+      fs.unlinkSync(f);
+      log("routedeck", `Removed OS autostart file ${f}`);
+    } catch (e) {
+      log("routedeck", `Failed to remove autostart: ${e.message}`);
+    }
   }
 }
 
@@ -632,6 +1255,79 @@ const routes = {
     return { loggedIn: true };
   },
   "GET /api/catalog": async () => CATALOG,
+  "POST /api/providers/connect-keyless": async () => {
+    if (!config.omniroute.enabled) throw httpError(400, "OmniRoute is disabled in settings.");
+    if (!(await portOpen(config.omniroute.port))) {
+      await startOmniRoute();
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        if (await portOpen(config.omniroute.port)) break;
+      }
+    }
+
+    const keyless = CATALOG.filter((p) => p.keyless);
+    let existingList = [];
+    try {
+      const existing = await omni("/api/providers");
+      existingList = Array.isArray(existing) ? existing : (existing?.connections || existing?.providers || []);
+    } catch {}
+    const existingIds = new Set(existingList.map((p) => p.provider));
+
+    const results = [];
+    for (const item of keyless) {
+      const canonicalId = item.id === "kilo-gateway" ? "kilocode" : item.id;
+      if (existingIds.has(item.id) || existingIds.has(canonicalId)) {
+        results.push({ provider: item.id, name: item.name, status: "already_connected" });
+        continue;
+      }
+      try {
+        let created = null;
+        try {
+          created = await omni("/api/providers", {
+            method: "POST",
+            body: {
+              provider: canonicalId,
+              name: item.name,
+              allowNoCredential: true,
+            },
+          });
+        } catch {
+          // Fallback with anonymous token for keyless providers categorized under apikey in OmniRoute
+          created = await omni("/api/providers", {
+            method: "POST",
+            body: {
+              provider: canonicalId,
+              name: item.name,
+              apiKey: "anonymous",
+            },
+          });
+        }
+
+        const connectionId = created?.connection?.id || created?.id;
+        if (connectionId) {
+          try {
+            await omni(`/api/providers/${encodeURIComponent(connectionId)}`, {
+              method: "PUT",
+              body: { isActive: true },
+            });
+          } catch {}
+        }
+
+        results.push({ provider: item.id, name: item.name, status: "connected" });
+      } catch (err) {
+        results.push({ provider: item.id, name: item.name, status: "error", error: err.message });
+      }
+    }
+
+    const connectedOrExisting = results.filter((r) => r.status === "connected" || r.status === "already_connected").length;
+
+    return {
+      success: true,
+      connectedCount: connectedOrExisting,
+      total: keyless.length,
+      results,
+    };
+  },
   "GET /api/providers": async () => {
     const data = await omni("/api/providers");
     const list = data?.connections || data?.providers || data || [];
@@ -666,9 +1362,13 @@ const routes = {
   "POST /api/providers/delete": async ({ body }) =>
     omni(`/api/providers/${encodeURIComponent(body.id)}`, { method: "DELETE" }),
   "GET /api/models": async () => {
-    const data = await omni("/v1/models");
-    const list = (data?.data || []).map((m) => m.id).filter(Boolean);
-    return [...new Set(list)].sort();
+    try {
+      const data = await omni("/v1/models");
+      const list = (data?.data || []).map((m) => m.id).filter(Boolean);
+      return [...new Set(list)].sort();
+    } catch {
+      return [];
+    }
   },
   "GET /api/savings": async () => {
     if (!(await portOpen(config.headroom.port))) return { running: false };
@@ -773,6 +1473,101 @@ const routes = {
   },
   "GET /api/claude/command": async () => ({ command: claudeCommandText(), env: claudeEnv() }),
   "POST /api/claude/launch": async () => launchClaude(),
+  "GET /api/clients/status": async ({ url }) => {
+    const dir = url.searchParams.get("workDir") || config.claude.workDir || os.homedir();
+    const model = url.searchParams.get("model") || config.claude.model || "";
+    const route = url.searchParams.get("route") || config.claude.route || "both";
+    const result = {};
+    for (const [id, def] of Object.entries(CLIENTS)) {
+      result[id] = getClientDetails(id, dir, model, route);
+    }
+    return { clients: result, activeRoute: route, activeModel: model, workDir: dir };
+  },
+  "POST /api/clients/launch": async ({ body }) => {
+    const client = body.client || "claude";
+    return launchClient(client, body.workDir, body.model, body.route);
+  },
+  "POST /api/clients/configure": async ({ body }) => {
+    const client = body.client || "cursor";
+    return configureClient(client, body.workDir, body.model, body.route);
+  },
+  "GET /api/providers/health": async () => {
+    let providers = [];
+    let isRunning = false;
+    let errorMsg = "";
+    if (config.omniroute.enabled && (await portOpen(config.omniroute.port))) {
+      isRunning = true;
+      try {
+        const data = await omni("/api/providers");
+        const list = data?.connections || data?.providers || data || [];
+        providers = (Array.isArray(list) ? list : []).map((c) => {
+          const testStatus = String(c.testStatus || c.test_status || "").toLowerCase();
+          const lastError = String(c.lastError || c.last_error || "").toLowerCase();
+          const isActive = c.isActive !== false && c.is_active !== 0;
+
+          const isRateLimited =
+            testStatus.includes("rate") ||
+            testStatus.includes("429") ||
+            testStatus.includes("limit") ||
+            testStatus.includes("quota") ||
+            lastError.includes("rate limit") ||
+            lastError.includes("429") ||
+            lastError.includes("quota") ||
+            lastError.includes("too many requests") ||
+            lastError.includes("exhausted");
+
+          const isBad =
+            !isRateLimited &&
+            (testStatus.includes("fail") ||
+              testStatus.includes("invalid") ||
+              testStatus.includes("error") ||
+              testStatus.includes("expired") ||
+              Boolean(c.lastError));
+
+          let status = "active";
+          if (!isActive) status = "inactive";
+          else if (isRateLimited) status = "rate_limited";
+          else if (isBad) status = "error";
+
+          const catalogEntry = CATALOG.find((p) => p.id === c.provider);
+
+          return {
+            id: c.id,
+            provider: c.provider,
+            name: c.name || c.displayName || catalogEntry?.name || c.provider,
+            status,
+            isActive,
+            freeTier: catalogEntry?.free || "Free tier",
+            testStatus: c.testStatus || c.test_status || "active",
+            lastError: c.lastError || c.last_error || "",
+          };
+        });
+      } catch (e) {
+        errorMsg = e.message;
+      }
+    }
+
+    const activeCount = providers.filter((p) => p.status === "active").length;
+    const rateLimitedCount = providers.filter((p) => p.status === "rate_limited").length;
+    const errorCount = providers.filter((p) => p.status === "error").length;
+    const inactiveCount = providers.filter((p) => p.status === "inactive").length;
+
+    return {
+      running: isRunning,
+      error: errorMsg,
+      total: providers.length,
+      counts: {
+        active: activeCount,
+        rateLimited: rateLimitedCount,
+        error: errorCount,
+        inactive: inactiveCount,
+      },
+      providers,
+    };
+  },
+  "GET /api/engines/status": async () => checkEngines(),
+  "GET /api/engines/install/stream": async ({ req, res }) => handleInstallStream({ req, res }),
+  "POST /api/engines/install": async ({ req, res }) => handleInstallStream({ req, res }),
   "POST /api/open": async ({ body }) => {
     const target =
       body.target === "omniroute"
@@ -783,6 +1578,27 @@ const routes = {
     if (!target) throw httpError(400, "Unknown target");
     openBrowser(target);
     return { opened: target };
+  },
+  "POST /api/headroom/mode": async ({ body }) => {
+    const valid = ["cache", "token"];
+    if (!valid.includes(body.mode)) throw httpError(400, "Invalid mode: must be cache or token");
+    config.headroom.mode = body.mode;
+    saveConfig();
+    let reloaded = false;
+    if (await portOpen(config.headroom.port)) {
+      log("routedeck", `Reloading Headroom in mode: ${body.mode}`);
+      await stopService("headroom");
+      await startHeadroom();
+      reloaded = true;
+    }
+    return { mode: config.headroom.mode, reloaded };
+  },
+  "POST /api/model/switch": async ({ body }) => {
+    if (typeof body.model !== "string") throw httpError(400, "Model required");
+    config.claude.model = body.model.trim();
+    saveConfig();
+    log("routedeck", `Default routing model updated to: ${config.claude.model || "auto"}`);
+    return { model: config.claude.model };
   },
 };
 
@@ -826,10 +1642,12 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const body = req.method === "GET" ? {} : await readBody(req);
-      const result = await handler({ body, url });
+      const result = await handler({ body, url, req, res });
+      if (res.writableEnded) return;
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
       res.end(JSON.stringify(result ?? {}));
     } catch (e) {
+      if (res.writableEnded) return;
       const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
       if (status >= 500) log("routedeck", `✖ ${req.method} ${url.pathname}: ${e.message}`);
       res.writeHead(status, { "content-type": "application/json" });
@@ -858,7 +1676,7 @@ const background = process.argv.includes("--background");
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {
     console.log(`RouteDeck is already running at http://localhost:${APP_PORT}`);
-    if (!background) openBrowser(`http://localhost:${APP_PORT}`);
+    if (!background && !config.app.silentBackground) openBrowser(`http://localhost:${APP_PORT}`);
     process.exit(0);
   }
   throw e;
@@ -871,12 +1689,13 @@ server.listen(APP_PORT, "127.0.0.1", async () => {
   sampleHistory();
   setInterval(sampleHistory, 5 * 60 * 1000).unref();
   refreshPonytail();
+  const isSilent = background || config.app.silentBackground;
   if (config.app.startServicesOnLaunch || background) {
     routes["POST /api/start"]({ body: { service: "all" } }).catch((e) =>
       log("routedeck", `✖ auto-start: ${e.message}`)
     );
   }
-  if (config.app.openBrowser && !background && !process.argv.includes("--no-browser")) {
+  if (config.app.openBrowser && !isSilent && !process.argv.includes("--no-browser")) {
     openBrowser(url);
   }
 });

@@ -21,7 +21,7 @@
         <button data-view="home" class="active"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
         <button data-view="analytics"><svg viewBox="0 0 24 24"><path d="M3 3v18h18 M7 15l4-4 3 3 6-7"/></svg>Analytics</button>
         <button data-view="providers"><svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7"/></svg>Providers <span class="badge" id="nav-prov-count"></span></button>
-        <button data-view="claude"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6 M12 19h8"/></svg>Claude Code</button>
+        <button data-view="clients"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6 M12 19h8"/></svg>AI Clients</button>
         <button data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
         <button data-view="logs"><svg viewBox="0 0 24 24"><path d="M4 6h16 M4 12h16 M4 18h10"/></svg>Logs</button>
       </nav>
@@ -34,6 +34,34 @@
     </aside>
 
     <main class="main">
+      <!-- LIVE QUICK-SWITCHER BAR (STICKY) -->
+      <header class="quick-switcher-bar" id="quick-switcher-bar">
+        <div class="qs-left">
+          <div class="qs-badge-title">
+            <span class="qs-dot" id="qs-hr-dot"></span>
+            <b>Headroom:</b>
+          </div>
+          <div class="qs-mode-toggle" id="qs-mode-toggle" role="group" aria-label="Headroom Compression Mode">
+            <button type="button" class="qs-mode-btn active" data-mode="cache" id="qs-btn-cache" title="Preserve prompt cache prefixes for providers">Cache-Friendly</button>
+            <button type="button" class="qs-mode-btn" data-mode="token" id="qs-btn-token" title="Max compression savings (shorter prompts)">Max Savings</button>
+          </div>
+          <span class="qs-mode-spinner" id="qs-mode-spinner" hidden>reloading…</span>
+        </div>
+
+        <div class="qs-right">
+          <div class="qs-model-box">
+            <span class="qs-label">Routing Model:</span>
+            <select class="qs-select" id="qs-model-select" title="Hot-swap OmniRoute default model">
+              <option value="">Auto (OmniRoute Default)</option>
+            </select>
+          </div>
+          <div class="qs-rate-alert" id="qs-rate-alert" hidden>
+            <span class="qs-rate-badge" id="qs-rate-badge">⚠️ Rate-Limit Detected</span>
+            <button class="btn xs warn" id="qs-btn-swap-model" title="Hot-swap to healthy free provider">Hot-Swap Model</button>
+          </div>
+        </div>
+      </header>
+
       <!-- HOME -->
       <section class="view active" id="view-home">
         <header class="page-head">
@@ -46,6 +74,34 @@
             <span id="power-label">Start everything</span>
           </button>
         </header>
+
+        <!-- MISSING ENGINES INSTALLER BANNER -->
+        <div class="card alert-card" id="engine-installer-banner" hidden>
+          <div class="banner-head">
+            <div class="banner-icon">
+              <svg viewBox="0 0 24 24"><path d="M12 9v4 M12 17h.01 M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            </div>
+            <div class="banner-info">
+              <h2 id="engine-banner-title">Missing Engines Detected</h2>
+              <p class="muted small" id="engine-banner-desc">OmniRoute and Headroom need to be installed to route and compress prompts.</p>
+              <div id="engine-prereq-warning" class="prereq-warning" hidden></div>
+            </div>
+            <div class="banner-actions">
+              <button class="btn primary" id="btn-install-engines">
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3"/></svg>
+                Fix / Install Missing Engines
+              </button>
+            </div>
+          </div>
+          <div id="engine-install-progress-card" class="install-progress-box" hidden>
+            <div class="progress-meta">
+              <span id="install-progress-status" class="progress-status">Preparing installation…</span>
+              <span id="install-progress-pct" class="progress-pct">0%</span>
+            </div>
+            <div class="progress-bar-bg"><div id="install-progress-fill" class="progress-bar-fill"></div></div>
+            <pre id="engine-install-log" class="install-log-terminal"></pre>
+          </div>
+        </div>
 
         <div class="flow card" id="flow">
           <div class="node" id="node-client">
@@ -73,6 +129,54 @@
           </div>
         </div>
 
+        <!-- ZERO-CONFIG INSTANT START BANNER -->
+        <div class="card instant-start-card" id="instant-start-card">
+          <div class="instant-start-head">
+            <div class="instant-start-badge">⚡ Instant Start (No API Key Needed)</div>
+            <p class="muted small">Start coding immediately with 4 free community AI models. No sign-ups, accounts, or API keys required.</p>
+          </div>
+          <div class="instant-start-chips">
+            <div class="keyless-chip"><span class="chip-dot"></span><b>Kilo Code</b><span class="muted">Rotating models</span></div>
+            <div class="keyless-chip"><span class="chip-dot"></span><b>Pollinations</b><span class="muted">Community pool</span></div>
+            <div class="keyless-chip"><span class="chip-dot"></span><b>OVHcloud AI</b><span class="muted">EU open models</span></div>
+            <div class="keyless-chip"><span class="chip-dot"></span><b>AI Horde</b><span class="muted">Distributed compute</span></div>
+          </div>
+          <div class="instant-start-actions">
+            <button class="btn primary" id="btn-connect-keyless">
+              <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              Connect All 4 Free Providers
+            </button>
+            <span class="small muted" id="keyless-status-msg">Click to add all 4 keyless providers to OmniRoute</span>
+          </div>
+        </div>
+
+        <!-- LIVE FREE-QUOTA MONITOR -->
+        <div class="card quota-monitor-card" id="quota-monitor-card">
+          <div class="card-head">
+            <div class="quota-head-info">
+              <h2>Free-Quota Health Monitor</h2>
+              <span class="muted small" id="quota-summary-text">Tracking connected provider quotas &amp; rate limits</span>
+            </div>
+            <div class="quota-legend">
+              <span class="legend-item"><i class="quota-dot ok"></i>Active (<span id="quota-cnt-active">0</span>)</span>
+              <span class="legend-item"><i class="quota-dot warn"></i>Rate-limited (<span id="quota-cnt-limited">0</span>)</span>
+              <span class="legend-item"><i class="quota-dot bad"></i>Error (<span id="quota-cnt-error">0</span>)</span>
+            </div>
+          </div>
+
+          <!-- Segmented Visual Health Bar -->
+          <div class="quota-bar-wrapper">
+            <div class="quota-bar-track" id="quota-bar-track">
+              <div class="quota-bar-empty">No providers connected yet</div>
+            </div>
+          </div>
+
+          <!-- Connected Providers Health Chips -->
+          <div class="quota-providers-grid" id="quota-providers-grid">
+            <div class="empty muted small">Connect free providers in <a href="#" data-goto="providers">Providers</a> to monitor real-time rate limits.</div>
+          </div>
+        </div>
+
         <div class="stats">
           <div class="stat card"><div class="stat-label">Tokens saved</div><div class="stat-value" id="s-saved">–</div><div class="stat-foot muted" id="s-saved-foot">by Headroom</div></div>
           <div class="stat card"><div class="stat-label">Requests</div><div class="stat-value" id="s-req">–</div><div class="stat-foot muted" id="s-req-foot">since Headroom started</div></div>
@@ -95,13 +199,13 @@
               <li data-step="engines"><span class="check"></span><div><b>Start the engines</b><span class="muted">Press <i>Start everything</i>. The first start takes about a minute.</span></div></li>
               <li data-step="login"><span class="check"></span><div><b>Connect to OmniRoute</b><span class="muted">Enter your OmniRoute password once, in <a href="#" data-goto="settings">Settings</a>.</span></div></li>
               <li data-step="provider"><span class="check"></span><div><b>Add a provider</b><span class="muted">Paste a free API key in <a href="#" data-goto="providers">Providers</a>.</span></div></li>
-              <li data-step="claude"><span class="check"></span><div><b>Launch Claude Code</b><span class="muted">One click in <a href="#" data-goto="claude">Claude Code</a>.</span></div></li>
+              <li data-step="claude"><span class="check"></span><div><b>Launch an AI Client</b><span class="muted">One click in <a href="#" data-goto="clients">AI Clients</a>.</span></div></li>
             </ol>
           </div>
           <div class="card">
             <h2>Quick actions</h2>
             <div class="actions">
-              <button class="btn primary" id="qa-claude"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6 M12 19h8"/></svg>Launch Claude Code</button>
+              <button class="btn primary" id="qa-claude"><svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6 M12 19h8"/></svg>Launch AI Clients</button>
               <button class="btn" id="qa-omni"><svg viewBox="0 0 24 24"><path d="M14 3h7v7 M10 14L21 3 M21 14v7H3V3h7"/></svg>OmniRoute dashboard</button>
               <button class="btn" id="qa-head"><svg viewBox="0 0 24 24"><path d="M14 3h7v7 M10 14L21 3 M21 14v7H3V3h7"/></svg>Headroom savings page</button>
             </div>
@@ -201,12 +305,12 @@
         <p class="muted small">Need something not listed (OAuth sign-in, Gemini CLI, Cloudflare)? Use the <a href="#" id="prov-open-omni">full OmniRoute dashboard</a>.</p>
       </section>
 
-      <!-- CLAUDE -->
-      <section class="view" id="view-claude">
+      <!-- AI CLIENTS -->
+      <section class="view" id="view-clients">
         <header class="page-head">
           <div>
-            <h1>Claude Code</h1>
-            <p class="muted">Open Claude Code in a terminal with everything already wired up.</p>
+            <h1>AI Clients</h1>
+            <p class="muted">One-click launch and automatic configuration for Claude Code, Cursor, OpenCode, Cline, and Aider.</p>
           </div>
         </header>
         <div class="card">
@@ -220,20 +324,72 @@
         <div class="grid-2">
           <div class="card">
             <h2>Model</h2>
-            <p class="muted small">Pick which OmniRoute model Claude Code uses. Leave on default to use Claude's own names.</p>
+            <p class="muted small">Pick which OmniRoute model your clients use. Leave on default for client defaults.</p>
             <div class="row">
               <select id="model-select"><option value="">Default (Claude's own model names)</option></select>
               <button class="btn small" id="model-reload">Reload</button>
             </div>
-            <input id="model-custom" placeholder="…or type a model id, e.g. gemini/gemini-3.5-flash" />
+            <input id="model-custom" placeholder="…or type a model id, e.g. gemini/gemini-2.5-flash" />
           </div>
           <div class="card">
             <h2>Project folder</h2>
-            <p class="muted small">Claude Code opens in this folder.</p>
+            <p class="muted small">Target project directory for launching and generating configs.</p>
             <input id="workdir" placeholder="C:\Users\you\projects\my-app" />
           </div>
         </div>
-        <div class="card ponytail-card">
+
+        <div class="card-head spaced">
+          <h2>Choose AI Client</h2>
+          <div class="chips" id="client-chips">
+            <button class="chip active" data-client="claude">Claude Code</button>
+            <button class="chip" data-client="cursor">Cursor</button>
+            <button class="chip" data-client="opencode">OpenCode</button>
+            <button class="chip" data-client="cline">Cline</button>
+            <button class="chip" data-client="aider">Aider</button>
+          </div>
+        </div>
+
+        <!-- ACTIVE CLIENT CARD -->
+        <div class="card client-detail-card" id="client-detail-card">
+          <div class="client-detail-head">
+            <div class="client-avatar" id="client-avatar">⚡</div>
+            <div class="client-meta">
+              <div class="client-title-row">
+                <h2 id="client-name">Claude Code</h2>
+                <span class="pill" id="client-status-pill">checking…</span>
+              </div>
+              <p class="muted small" id="client-tagline">Anthropic's terminal-based agentic coding tool</p>
+            </div>
+            <div class="client-top-actions">
+              <button class="btn small" id="client-config-btn">
+                <svg viewBox="0 0 24 24"><path d="M12 20h9 M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                Auto-configure project
+              </button>
+            </div>
+          </div>
+
+          <div class="client-config-section">
+            <div class="card-subhead">
+              <b id="client-config-heading">Configuration Setup</b>
+              <span class="muted small" id="client-config-label">Settings file or environment</span>
+            </div>
+            <pre class="codebox" id="client-config-code"></pre>
+          </div>
+
+          <div class="launch-card">
+            <button class="btn primary big" id="client-launch-btn">
+              <svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg>
+              <span id="client-launch-label">Launch Claude Code</span>
+            </button>
+            <div class="cmd">
+              <div class="muted small" id="client-cmd-label">Or run this yourself in a terminal:</div>
+              <div class="copyrow"><code id="client-cmd-code"></code><button class="icon-btn" data-copy="client-cmd-code" title="Copy">⧉</button></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ponytail (Claude Code plugin) -->
+        <div class="card ponytail-card" id="claude-ponytail-card">
           <div class="pt-left">
             <div class="pt-logo">🐴</div>
             <div>
@@ -252,14 +408,8 @@
             <button class="btn small primary" id="pt-install">Install</button>
           </div>
         </div>
-        <div class="card launch-card">
-          <button class="btn primary big" id="claude-launch"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-14 9z"/></svg>Launch Claude Code</button>
-          <div class="cmd">
-            <div class="muted small">Or run this yourself in a terminal:</div>
-            <div class="copyrow"><code id="claude-cmd"></code><button class="icon-btn" data-copy="claude-cmd" title="Copy">⧉</button></div>
-          </div>
-        </div>
-        <p class="muted small">Note: the Claude desktop app can't be routed. It always talks to Anthropic directly. This works with Claude Code in a terminal.</p>
+
+        <p class="muted small" id="client-note-footer">Note: RouteDeck proxies requests directly to your routed engines (Headroom compression + OmniRoute free models).</p>
       </section>
 
       <!-- SETTINGS -->
@@ -301,7 +451,8 @@
           <div class="settings">
             <label class="toggle-row"><div><b>Start everything when RouteDeck opens</b><span class="muted">Truly one click: open RouteDeck and it's ready.</span></div><input type="checkbox" class="switch" data-key="app.startServicesOnLaunch" /></label>
             <label class="toggle-row"><div><b>Open this page automatically</b><span class="muted">When RouteDeck starts.</span></div><input type="checkbox" class="switch" data-key="app.openBrowser" /></label>
-            <label class="toggle-row" id="row-login"><div><b>Start with Windows</b><span class="muted">Run RouteDeck and all services in the background when you sign in.</span></div><input type="checkbox" class="switch" data-key="app.launchAtLogin" /></label>
+            <label class="toggle-row" id="row-login"><div><b id="lbl-login">Start with OS</b><span class="muted" id="lbl-login-sub">Run RouteDeck and all services automatically when you sign in (Windows, macOS, Linux).</span></div><input type="checkbox" class="switch" data-key="app.launchAtLogin" /></label>
+            <label class="toggle-row" id="row-silent"><div><b>Start minimized / silent background mode</b><span class="muted">Boot Headroom &amp; OmniRoute automatically in the background without opening browser tabs on startup.</span></div><input type="checkbox" class="switch" data-key="app.silentBackground" /></label>
           </div>
         </div>
       </section>
