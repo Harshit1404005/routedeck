@@ -6,6 +6,8 @@
 
 **Free AI for Claude Code, in one click.**
 
+🌐 **Website:** https://harshit1404005.github.io/routedeck/
+
 Paste a few free API keys. Press **Start**. Your prompts get compressed by
 [Headroom](https://github.com/headroomlabs-ai/headroom) and routed across free providers by
 [OmniRoute](https://github.com/cheaper-inference/OmniRoute), all from one friendly dashboard.

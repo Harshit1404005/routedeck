@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RouteDeck: Free Claude Code with Headroom and OmniRoute, one click</title>
+  <meta name="description" content="RouteDeck is a free, open-source one-click control panel for Headroom (token compression) and OmniRoute (free multi-provider AI router). Use Claude Code with free models like Gemini, Mistral and Groq." />
+  <meta name="keywords" content="Claude Code free, Claude Code free models, Claude Code OmniRoute, Claude Code Headroom, free AI API, free LLM router, OpenAI compatible router, token compression, reduce LLM tokens, Gemini free API, Mistral free API, Groq free API, OpenRouter free, AI gateway, LLM proxy, RouteDeck" />
+  <meta name="author" content="Harshit Gupta" />
+  <meta name="robots" content="index, follow, max-image-preview:large" />
+  <link rel="canonical" href="https://harshit1404005.github.io/routedeck/" />
+  <meta name="theme-color" content="#6d4aff" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="RouteDeck" />
+  <meta property="og:title" content="RouteDeck: Free Claude Code with Headroom and OmniRoute" />
+  <meta property="og:description" content="Paste free API keys, press Start, and use Claude Code with free models. One-click control panel for Headroom and OmniRoute." />
+  <meta property="og:url" content="https://harshit1404005.github.io/routedeck/" />
+  <meta property="og:image" content="https://harshit1404005.github.io/routedeck/home-dark.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="RouteDeck: Free Claude Code, one click" />
+  <meta name="twitter:description" content="One-click control panel for Headroom + OmniRoute. Use Claude Code with free AI models." />
+  <meta name="twitter:image" content="https://harshit1404005.github.io/routedeck/home-dark.jpg" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "RouteDeck",
+        "description": "One-click control panel for Headroom (token compression) and OmniRoute (free multi-provider AI router). Use Claude Code with free AI models.",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Windows, macOS, Linux",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "license": "https://opensource.org/licenses/MIT",
+        "url": "https://harshit1404005.github.io/routedeck/",
+        "codeRepository": "https://github.com/Harshit1404005/routedeck",
+        "author": { "@type": "Person", "name": "Harshit Gupta", "url": "https://github.com/Harshit1404005" }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          { "@type": "Question", "name": "How do I use Claude Code for free?", "acceptedAnswer": { "@type": "Answer", "text": "Install RouteDeck, add a free API key from a provider such as Gemini, Mistral or Groq in OmniRoute, then press Launch Claude Code. Claude Code then sends its requests through Headroom and OmniRoute to the free model." } },
+          { "@type": "Question", "name": "What is RouteDeck?", "acceptedAnswer": { "@type": "Answer", "text": "RouteDeck is a free, open-source desktop-style control panel that starts and manages Headroom and OmniRoute together, so you can use free AI models with Claude Code in one click." } },
+          { "@type": "Question", "name": "Does RouteDeck work with the Claude desktop app?", "acceptedAnswer": { "@type": "Answer", "text": "No. The Claude desktop app always connects to Anthropic directly. RouteDeck works with Claude Code in a terminal and with any app that accepts a custom base URL." } },
+          { "@type": "Question", "name": "Is RouteDeck free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. RouteDeck is MIT licensed. Free models are limited by each provider's free tier." } }
+        ]
+      }
+    ]
+  }
+  </script>
+
+  <style>
+    :root { --bg:#f6f7fb; --panel:#fff; --text:#141824; --muted:#667085; --accent:#6d4aff; --accent2:#0fb5d4; --border:#e3e6ef; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#0d0f17; --panel:#151826; --text:#e8eaf3; --muted:#8b92ab; --border:#262b40; } }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+    a { color:var(--accent); }
+    .wrap { max-width:960px; margin:0 auto; padding:0 20px; }
+    header.hero { text-align:center; padding:64px 0 40px; }
+    .logo { width:72px; height:72px; border-radius:18px; background:linear-gradient(135deg,var(--accent),var(--accent2)); display:inline-grid; place-items:center; color:#fff; font-size:34px; font-weight:800; }
+    h1 { font-size:clamp(28px,5vw,44px); line-height:1.15; margin:18px 0 12px; letter-spacing:-0.02em; }
+    .lede { color:var(--muted); font-size:19px; max-width:680px; margin:0 auto 24px; }
+    .cta { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+    .btn { padding:12px 20px; border-radius:999px; font-weight:700; text-decoration:none; border:1px solid var(--border); background:var(--panel); color:var(--text); }
+    .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+    section { padding:28px 0; }
+    h2 { font-size:24px; margin:0 0 14px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+    .card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px; }
+    .card h3 { margin:0 0 6px; font-size:17px; }
+    .card p { margin:0; color:var(--muted); font-size:15px; }
+    pre { background:#0b0d14; color:#c9d1e6; padding:16px; border-radius:12px; overflow-x:auto; font-size:14px; }
+    img.shot { width:100%; border-radius:14px; border:1px solid var(--border); }
+    details { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px 18px; margin-bottom:10px; }
+    summary { font-weight:700; cursor:pointer; }
+    details p { color:var(--muted); margin:8px 0 0; }
+    footer { text-align:center; color:var(--muted); font-size:14px; padding:32px 0 48px; }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="logo" aria-hidden="true">R</div>
+      <h1>Free Claude Code, in one click</h1>
+      <p class="lede">RouteDeck starts <a href="https://github.com/headroomlabs-ai/headroom">Headroom</a> (token compression) and <a href="https://github.com/cheaper-inference/OmniRoute">OmniRoute</a> (free multi-provider AI router) together. Paste free API keys, press Start, and use Claude Code with free models.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/Harshit1404005/routedeck">Get RouteDeck on GitHub</a>
+        <a class="btn" href="#install">How to install</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <img class="shot" src="home-dark.jpg" alt="RouteDeck dashboard showing Headroom and OmniRoute running, with savings and a Launch Claude Code button" width="960" height="540" />
+
+    <section>
+      <h2>Why RouteDeck</h2>
+      <div class="grid">
+        <div class="card"><h3>One click</h3><p>Start or stop Headroom and OmniRoute together. No terminal, no environment variables.</p></div>
+        <div class="card"><h3>Free models</h3><p>Connect free providers such as Gemini, Mistral, OpenRouter, Groq and GitHub Models, plus keyless options.</p></div>
+        <div class="card"><h3>Fewer tokens</h3><p>Headroom compresses logs, JSON and tool output before they reach the model, with live savings shown.</p></div>
+        <div class="card"><h3>Analytics</h3><p>Requests, tokens, success rate, latency and errors by provider and model, with graphs and tables.</p></div>
+        <div class="card"><h3>Ponytail built in</h3><p>Install the Ponytail Claude Code plugin with one click, to keep code small and focused.</p></div>
+        <div class="card"><h3>Private and local</h3><p>The dashboard answers only this computer. Your keys stay in your own OmniRoute.</p></div>
+      </div>
+    </section>
+
+    <section id="install">
+      <h2>Install in three steps</h2>
+      <pre>npm install -g omniroute
+pip install "headroom-ai[proxy]"
+git clone https://github.com/Harshit1404005/routedeck
+cd routedeck && node server.mjs</pre>
+      <p class="muted">Windows: double-click <code>RouteDeck.cmd</code>. macOS and Linux: run <code>./routedeck.sh</code>. Then press Start everything, add a free key, and launch Claude Code.</p>
+    </section>
+
+    <section>
+      <h2>Frequently asked questions</h2>
+      <details open><summary>How do I use Claude Code for free?</summary><p>Install RouteDeck, add a free API key (Gemini, Mistral or Groq work well) in the Providers page, then press Launch Claude Code. Requests go through Headroom and OmniRoute to the free model.</p></details>
+      <details><summary>What is RouteDeck?</summary><p>A free, open-source control panel that starts and manages Headroom and OmniRoute together, so free AI models work with Claude Code in one click.</p></details>
+      <details><summary>Does it work with the Claude desktop app?</summary><p>No. The Claude desktop app always connects to Anthropic directly. RouteDeck works with Claude Code in a terminal and with any app that accepts a custom base URL.</p></details>
+      <details><summary>Is RouteDeck free?</summary><p>Yes. It is MIT licensed. Free models are limited by each provider's free tier.</p></details>
+      <details><summary>Which AI providers does it support?</summary><p>Google Gemini, Mistral, OpenRouter, Groq, GitHub Models, NVIDIA NIM, Z.AI, DeepSeek, Cerebras, plus keyless options such as Kilo Code, OpenCode Zen and Pollinations.</p></details>
+    </section>
+  </main>
+
+  <footer>
+    <p>RouteDeck by <a href="https://github.com/Harshit1404005">Harshit Gupta</a>. MIT license. Not affiliated with Anthropic, OmniRoute or Headroom.</p>
+    <p><a href="https://github.com/Harshit1404005/routedeck">Source on GitHub</a></p>
+  </footer>
+</body>
+</html>

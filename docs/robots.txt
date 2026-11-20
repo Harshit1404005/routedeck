@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://harshit1404005.github.io/routedeck/sitemap.xml
